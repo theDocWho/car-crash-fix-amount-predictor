@@ -1,6 +1,6 @@
 # Project Status — Car Crash Fix Amount Predictor
 
-**Last updated:** 2026-05-13 (Phase 2B scaffold + smoke end-to-end; both variants now runnable side-by-side)
+**Last updated:** 2026-05-14 (Phase 3 scaffold complete; HF Space deploy primed)
 
 This folder tracks what has been built and what remains. One file per phase. The full design lives in [../PLAN.md](../PLAN.md).
 
@@ -13,7 +13,7 @@ This folder tracks what has been built and what remains. One file per phase. The
 | 1.5 | Make/model identifier (Stanford Cars fine-tune) | ✅ **Done** (scaffold + smoke-verified; full training is a CLI command) | [phase_1_5_car_identifier.md](phase_1_5_car_identifier.md) |
 | 2A | ResNet50 multi-label damage classifier + XGBoost(A) | ✅ **Done** (scaffold + smoke end-to-end; full training is a CLI sequence) | [phase_2a_resnet_classifier.md](phase_2a_resnet_classifier.md) |
 | 2B | YOLOv8 damage detector + XGBoost(B) | ✅ **Done** (scaffold + smoke; full training is a CLI sequence) | [phase_2b_yolov8_detector.md](phase_2b_yolov8_detector.md) |
-| 3 | Comparison notebook, report generator, FastAPI + Gradio demo | ⏳ Pending | [phase_3_comparison_and_serving.md](phase_3_comparison_and_serving.md) |
+| 3 | Comparison report (HTML+PDF), FastAPI, Gradio demo, HF Space deploy | ✅ **Done** (scaffold + verified locally; HF deploy on next merge) | [phase_3_comparison_and_serving.md](phase_3_comparison_and_serving.md) |
 | 4 | Continued-training + promotion workflow validation, final report | ⏳ Pending | [phase_4_promotion_and_final_report.md](phase_4_promotion_and_final_report.md) |
 
 ## Conventions

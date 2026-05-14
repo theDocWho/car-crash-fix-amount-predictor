@@ -23,12 +23,16 @@ data_app = typer.Typer(help="Dataset commands: download, schema inspection, refe
 unidentified_app = typer.Typer(help="Manage the unidentified-cars bucket.")
 train_app = typer.Typer(help="Training commands.")
 registry_app = typer.Typer(help="Model registry commands.")
+serve_app = typer.Typer(help="Serve the inference API or the Gradio demo.")
+report_app = typer.Typer(help="Generate the comparison report.")
 app.add_typer(costing_app, name="costing")
 app.add_typer(fx_app, name="fx")
 app.add_typer(data_app, name="data")
 app.add_typer(unidentified_app, name="unidentified")
 app.add_typer(train_app, name="train")
 app.add_typer(registry_app, name="registry")
+app.add_typer(serve_app, name="serve")
+app.add_typer(report_app, name="report")
 
 console = Console()
 
@@ -662,6 +666,74 @@ def registry_promote(
     from ccdp.registry import promote
     link = promote(run_id, variant=variant, weights_filename=weights)
     console.print(f"[green]Promoted[/green] {run_id} -> {link}")
+
+
+# ----------------- serve ------------------------------------------------
+
+
+@serve_app.command("api")
+def serve_api(
+    host: str = typer.Option("127.0.0.1", help="Bind address. Use 0.0.0.0 to expose."),
+    port: int = typer.Option(8000),
+    reload: bool = typer.Option(False, help="uvicorn auto-reload (dev only)."),
+) -> None:
+    """Run the FastAPI inference service."""
+    import uvicorn
+    console.print(f"[bold]Starting ccdp API[/bold] on http://{host}:{port}")
+    uvicorn.run("ccdp.api.server:app", host=host, port=port, reload=reload)
+
+
+@serve_app.command("demo")
+def serve_demo(
+    host: str = typer.Option("127.0.0.1"),
+    port: int = typer.Option(7860),
+    share: bool = typer.Option(False, help="Gradio public share link."),
+) -> None:
+    """Run the Gradio demo."""
+    from ccdp.api.demo import build_demo
+    import gradio as gr
+    demo = build_demo()
+    demo.launch(
+        server_name=host, server_port=port, share=share, show_error=True,
+        theme=gr.themes.Soft(),
+    )
+
+
+# ----------------- report -----------------------------------------------
+
+
+@report_app.command("generate")
+def report_generate(
+    variant: str = typer.Option("both", help="a | b | both"),
+    limit: int = typer.Option(0, help="Cap test images (0 = all). Smoke runs use a small value."),
+    no_pdf: bool = typer.Option(False, "--no-pdf"),
+) -> None:
+    """Build the Variant-A-vs-B comparison report (HTML always, PDF optional)."""
+    from ccdp.eval import build_comparison, report as report_mod
+    from ccdp.infer.variant_a import VariantAPipeline
+
+    pipe_a = VariantAPipeline() if variant in ("a", "both") else None
+    pipe_b = None
+    if variant in ("b", "both"):
+        try:
+            from ccdp.infer.variant_b import VariantBPipeline
+            pipe_b = VariantBPipeline()
+        except FileNotFoundError as e:
+            console.print(f"[yellow]Variant B unavailable: {e}[/yellow]")
+
+    if pipe_a is None and pipe_b is None:
+        console.print("[red]No pipelines available — nothing to report.[/red]")
+        raise typer.Exit(2)
+    # If user asked only for B but B failed, fall back to A-only
+    if pipe_a is None and pipe_b is not None:
+        pipe_a = pipe_b
+        pipe_b = None
+
+    cmp = build_comparison(pipe_a, pipe_b, limit=(limit or None))
+    paths = report_mod.generate(cmp, also_pdf=not no_pdf)
+    console.print(f"[green]HTML:[/green] {paths['html']}")
+    if paths.get("pdf"):
+        console.print(f"[green]PDF: [/green] {paths['pdf']}")
 
 
 if __name__ == "__main__":  # pragma: no cover

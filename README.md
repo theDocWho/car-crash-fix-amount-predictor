@@ -170,6 +170,163 @@ Phase status: see [progress/STATUS.md](progress/STATUS.md). Full design rational
 
 ---
 
+## Diagrams
+
+### Local execution (single image)
+
+```mermaid
+flowchart TD
+    classDef data fill:#e1f5fe,stroke:#01579b
+    classDef model fill:#fff3e0,stroke:#e65100
+    classDef io fill:#f3e5f5,stroke:#4a148c
+    classDef out fill:#e8f5e9,stroke:#1b5e20
+
+    user[User on M-series Mac]:::io
+    img[Car damage image]:::data
+    meta[Optional metadata:<br/>make / model / year / body_type]:::data
+    cli[ccdp CLI<br/>src/ccdp/cli.py]:::io
+
+    pre[ccdp.preprocess<br/>downscale + quality_report]:::model
+
+    pipeA[VariantAPipeline<br/>infer/variant_a.py]:::model
+    pipeB[VariantBPipeline<br/>infer/variant_b.py]:::model
+
+    classifier[(classifier.pt<br/>ResNet50)]:::model
+    detector[(detector.pt<br/>YOLOv8n)]:::model
+    xgbA[(xgb_a.ubj)]:::model
+    xgbB[(xgb_b.ubj)]:::model
+
+    base[BaseVariantPipeline<br/>XGBoost + calibrator + FX + provenance]:::model
+    catalog[(active.yaml<br/>parts cost catalog)]:::data
+    fx[(fx_cache.json)]:::data
+
+    out[Response JSON<br/>damage_types, parts, cost,<br/>tier, provenance, catalog_id]:::out
+
+    user --> img
+    user --> meta
+    img --> cli
+    meta --> cli
+    cli --> pre
+    pre --> pipeA
+    pre --> pipeB
+
+    pipeA --> classifier
+    pipeA --> base
+    pipeB --> detector
+    pipeB --> classifier
+    pipeB --> base
+
+    base --> xgbA
+    base --> xgbB
+    base --> catalog
+    base --> fx
+
+    base --> out
+    out --> user
+```
+
+### Deployment (GitHub → HuggingFace Space)
+
+```mermaid
+flowchart LR
+    classDef gh fill:#f6f8fa,stroke:#1f6feb
+    classDef hf fill:#fff8e1,stroke:#ffa000
+    classDef user fill:#e8f5e9,stroke:#1b5e20
+
+    dev[Developer pushes<br/>to main]:::user
+
+    subgraph GitHub
+        repo[(theDocWho/<br/>car-crash-fix-amount-predictor)]:::gh
+        action[GitHub Action<br/>.github/workflows/<br/>deploy-hf.yml]:::gh
+        release[(v0.1.0 Release<br/>~600 MB weights)]:::gh
+    end
+
+    subgraph HuggingFace
+        space[HF Space<br/>theDocWho/car-crash...<br/>Gradio SDK, CPU]:::hf
+        cache[(Cached weights<br/>downloaded on first boot)]:::hf
+        gradio[Gradio app<br/>app.py launches<br/>ccdp.api.demo]:::hf
+    end
+
+    visitor[Public visitor<br/>any browser]:::user
+
+    dev --> repo
+    repo -- on push to main --> action
+    action -- force-pushes files --> space
+    release -. fetched on first boot .-> cache
+    space --> gradio
+    cache --> gradio
+    visitor -- huggingface.co/spaces/... --> gradio
+    gradio -- HTML / JSON --> visitor
+```
+
+### Training (Phases 1–2; already complete in v0.1.0)
+
+```mermaid
+flowchart TD
+    classDef data fill:#e1f5fe,stroke:#01579b
+    classDef train fill:#fff3e0,stroke:#e65100
+    classDef artifact fill:#fce4ec,stroke:#880e4f
+
+    kaggle[scripts/download_datasets.sh]:::data
+    cardd[(CarDD<br/>4000 images + COCO bboxes)]:::data
+    sc[(Stanford Cars<br/>196 classes)]:::data
+    comp[(comprehensive<br/>front/rear x condition)]:::data
+    iaai[(iaai metadata<br/>12353 rows, no cost)]:::data
+
+    kaggle --> cardd
+    kaggle --> sc
+    kaggle --> comp
+    kaggle --> iaai
+
+    tr_cls[ccdp train classifier]:::train
+    tr_det[ccdp train detector]:::train
+    tr_id[ccdp train identifier<br/>+ RandAug + MixUp + CutMix]:::train
+
+    cardd --> tr_cls
+    cardd --> tr_det
+    sc --> tr_id
+
+    classifier[(classifier.pt<br/>val F1 0.834)]:::artifact
+    detector[(detector.pt<br/>mAP50 0.687)]:::artifact
+    identifier[(identifier.pt<br/>val acc 77.0%)]:::artifact
+
+    tr_cls --> classifier
+    tr_det --> detector
+    tr_id --> identifier
+
+    feat[extract-features]:::train
+    bbox[extract-bbox-features]:::train
+    synth[synth-targets<br/>iaai metadata + catalog]:::train
+
+    classifier --> feat
+    detector --> bbox
+    iaai --> synth
+
+    xgbA_tr[xgb --variant a]:::train
+    xgbB_tr[xgb --variant b]:::train
+
+    feat --> xgbA_tr
+    feat --> xgbB_tr
+    bbox --> xgbB_tr
+    synth --> xgbA_tr
+    synth --> xgbB_tr
+
+    xgb_a[(xgb_a.ubj<br/>val R^2 0.630)]:::artifact
+    xgb_b[(xgb_b.ubj<br/>val R^2 0.716)]:::artifact
+
+    xgbA_tr --> xgb_a
+    xgbB_tr --> xgb_b
+
+    promote[ccdp registry promote<br/>updates production/ symlinks]:::train
+    classifier --> promote
+    detector --> promote
+    identifier --> promote
+    xgb_a --> promote
+    xgb_b --> promote
+```
+
+---
+
 ## Execution flow
 
 ### Training (run once, then promote the winning runs)
