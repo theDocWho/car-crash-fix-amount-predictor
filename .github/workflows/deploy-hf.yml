@@ -18,7 +18,8 @@ jobs:
 
     steps:
       - name: Check out repo (full history; HF expects it)
-        uses: actions/checkout@v4
+        # @v5 runs on Node 24; v4 was deprecated for Node 20 sunset on 2026-06-06.
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
           lfs: false
@@ -42,7 +43,7 @@ jobs:
           colorFrom: blue
           colorTo: red
           sdk: gradio
-          sdk_version: "4.44.0"
+          sdk_version: "5.46.0"
           python_version: "3.11"
           app_file: app.py
           pinned: false
