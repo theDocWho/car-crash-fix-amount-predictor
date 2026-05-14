@@ -1,0 +1,29 @@
+# Runtime dependencies for the HuggingFace Space.
+# Mirrors `pyproject.toml [project.dependencies]` + `[ml]` + `[serve]` minus
+# things only needed for training (datasets / kaggle / jupyter / etc.).
+# Keep CPU-only torch wheels — the Space runs on CPU.
+
+pyyaml>=6.0
+requests>=2.31
+typer>=0.12
+rich>=13.7
+pydantic>=2.6
+jinja2>=3.1
+
+# ML
+torch>=2.2
+torchvision>=0.17
+ultralytics>=8.1
+xgboost>=2.0
+scikit-learn>=1.4
+pandas>=2.2
+numpy>=1.26
+pillow>=10.2
+opencv-python-headless>=4.9
+scipy>=1.10
+
+# Serving
+fastapi>=0.110
+uvicorn>=0.27
+gradio>=4.20
+python-multipart>=0.0.9

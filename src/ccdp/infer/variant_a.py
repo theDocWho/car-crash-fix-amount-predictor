@@ -76,13 +76,16 @@ class VariantAPipeline(BaseVariantPipeline):
 
     def predict(
         self,
-        image_path: str | Path,
+        image,
         metadata: Optional[IdentificationResult] = None,
         threshold: float = 0.5,
         currency: str = "USD",
         catalog: Optional[Catalog] = None,
     ) -> PredictionA:
         """Run end-to-end inference on a single image.
+
+        ``image`` accepts a path-like (``str`` / ``Path``) or an already-opened
+        ``PIL.Image`` — useful from the API where the bytes are in memory.
 
         Steps:
           1. Forward the image through the classifier; threshold sigmoid probs.
@@ -93,7 +96,7 @@ class VariantAPipeline(BaseVariantPipeline):
         """
         catalog = catalog or load_active()
 
-        damage_types, probabilities, image_features = self._forward(image_path)
+        damage_types, probabilities, image_features = self._forward(image)
         parts = self._infer_parts(damage_types)
 
         if self._can_use_xgb(metadata):
@@ -125,9 +128,15 @@ class VariantAPipeline(BaseVariantPipeline):
 
     # -- internals --------------------------------------------------------
 
-    def _forward(self, image_path: str | Path):
-        """Single forward pass; returns (damage_types, prob_dict, 2048-d features)."""
-        img = Image.open(image_path).convert("RGB")
+    def _forward(self, image):
+        """Single forward pass; returns (damage_types, prob_dict, 2048-d features).
+
+        ``image`` may be a path-like *or* an already-opened PIL.Image.
+        """
+        if isinstance(image, Image.Image):
+            img = image.convert("RGB")
+        else:
+            img = Image.open(image).convert("RGB")
         x = self.transform(img).unsqueeze(0).to(self.device)
         with torch.no_grad():
             logits = self.classifier(x)

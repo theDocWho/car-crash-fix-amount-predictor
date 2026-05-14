@@ -106,19 +106,22 @@ class VariantBPipeline(BaseVariantPipeline):
 
     def predict(
         self,
-        image_path: str | Path,
+        image,
         metadata: Optional[IdentificationResult] = None,
         currency: str = "USD",
         catalog: Optional[Catalog] = None,
     ) -> PredictionB:
-        """Detect damages, score them, return calibrated cost + provenance."""
+        """Detect damages, score them, return calibrated cost + provenance.
+
+        ``image`` accepts a path-like or an already-opened ``PIL.Image``.
+        """
         catalog = catalog or load_active()
 
-        detections, stats = self._detect(image_path, metadata)
+        detections, stats = self._detect(image, metadata)
         damage_types = sorted({d.damage_type for d in detections})
         parts = sorted({d.part for d in detections if d.part})
 
-        image_features = self._image_features(image_path)
+        image_features = self._image_features(image)
 
         if self._can_use_xgb(metadata):
             cost_usd, tier, provenance = self._predict_via_xgb(
@@ -152,12 +155,17 @@ class VariantBPipeline(BaseVariantPipeline):
 
     def _detect(
         self,
-        image_path: str | Path,
+        image,
         metadata: Optional[IdentificationResult],
     ) -> tuple[list[DetectedBox], dict]:
-        """Run YOLOv8 and convert raw boxes into ``DetectedBox`` + per-image stats."""
+        """Run YOLOv8 and convert raw boxes into ``DetectedBox`` + per-image stats.
+
+        Ultralytics accepts paths, PIL.Image, numpy arrays, or tensors — we
+        just pass through whatever the caller gave us.
+        """
+        source = str(image) if isinstance(image, (str, Path)) else image
         result = self.detector.predict(
-            str(image_path), imgsz=self.imgsz, conf=self.conf, verbose=False,
+            source, imgsz=self.imgsz, conf=self.conf, verbose=False,
         )[0]
         h, w = result.orig_shape
         location_hint = metadata.body_type if metadata else "unknown"
@@ -190,9 +198,12 @@ class VariantBPipeline(BaseVariantPipeline):
                 ))
         return detections, bbox_stats(bboxes_for_stats)
 
-    def _image_features(self, image_path: str | Path):
+    def _image_features(self, image):
         """2048-d backbone features shared with Variant A's XGBoost feature schema."""
-        img = Image.open(image_path).convert("RGB")
+        if isinstance(image, Image.Image):
+            img = image.convert("RGB")
+        else:
+            img = Image.open(image).convert("RGB")
         x = self.transform(img).unsqueeze(0).to(self.device)
         with torch.no_grad():
             return extract_features(self.classifier, x).cpu().numpy().flatten()

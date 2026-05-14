@@ -1,0 +1,77 @@
+name: Deploy to HuggingFace Space
+
+# Sync `main` to the HuggingFace Space whenever main moves.
+# Requires:
+#   - secret HF_TOKEN  (HuggingFace user access token with write scope)
+#   - variable HF_USERNAME (set via `gh variable set HF_USERNAME --body <name>`)
+
+on:
+  push:
+    branches:
+      - main
+  # Allow ad-hoc redeploys from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repo (full history; HF expects it)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: false
+
+      - name: Prepend HF Space metadata to README
+        env:
+          HF_USERNAME: ${{ vars.HF_USERNAME }}
+        run: |
+          set -euo pipefail
+          # HF Spaces require YAML frontmatter at the top of README.md.
+          # We synthesize it here so the GitHub copy stays clean (no leading YAML).
+          cat > _hf_README.md <<EOF
+          ---
+          title: Car Crash Fix Amount Predictor
+          emoji: 🚗
+          colorFrom: blue
+          colorTo: red
+          sdk: gradio
+          sdk_version: "4.44.0"
+          app_file: app.py
+          pinned: false
+          license: mit
+          short_description: Detect car damage and estimate repair cost
+          ---
+
+          EOF
+          cat README.md >> _hf_README.md
+          mv _hf_README.md README.md
+
+      - name: Push to HuggingFace Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_USERNAME: ${{ vars.HF_USERNAME }}
+        run: |
+          set -euo pipefail
+          SPACE="${HF_USERNAME}/car-crash-fix-amount-predictor"
+          # Configure git with the HF user
+          git config user.name  "${HF_USERNAME}"
+          git config user.email "${HF_USERNAME}@users.noreply.huggingface.co"
+          # Add HF Space as a remote (created on first push if it doesn't exist
+          # — but only when using `huggingface-cli`. To be safe, the Space
+          # should be created once manually at huggingface.co/new-space, or via
+          # the API call below.)
+          if ! git ls-remote "https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co/spaces/${SPACE}" >/dev/null 2>&1; then
+            echo "Space ${SPACE} not found — creating it via the HF API…"
+            curl -sf -X POST \
+              -H "Authorization: Bearer ${HF_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d '{"type":"space","name":"car-crash-fix-amount-predictor","sdk":"gradio"}' \
+              https://huggingface.co/api/repos/create
+          fi
+          git remote add hf "https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co/spaces/${SPACE}"
+          # Force-push so the Space mirrors `main`. We intentionally drop the
+          # Space's own commit history — single source of truth is GitHub.
+          git push --force hf HEAD:main
+          echo "Deployed to https://huggingface.co/spaces/${SPACE}"
