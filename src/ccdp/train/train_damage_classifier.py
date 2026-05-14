@@ -7,7 +7,6 @@ recall / F1, macro F1, micro F1, mAP. Saved per epoch with full resume.
 
 from __future__ import annotations
 
-import random
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -18,7 +17,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torchvision import transforms
 
 from ccdp.data import damage_dataset as dd
 from ccdp.data.loaders import iter_cardd
@@ -29,9 +27,7 @@ from ccdp.models.damage_classifier import (
     set_finetune_stage,
 )
 from ccdp.registry import create_run, load_checkpoint, save_checkpoint, update_metrics
-
-IMAGENET_MEAN = (0.485, 0.456, 0.406)
-IMAGENET_STD = (0.229, 0.224, 0.225)
+from ccdp.utils import eval_transform, pick_device, seed_everything, train_transform
 
 
 @dataclass
@@ -49,36 +45,8 @@ class TrainConfig:
     label_smoothing: float = 0.0
 
 
-def _pick_device() -> torch.device:
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
-
-
-def _seed_everything(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-
-def _transforms(image_size: int, train: bool):
-    if train:
-        return transforms.Compose([
-            transforms.Resize(int(image_size * 1.15)),
-            transforms.RandomResizedCrop(image_size, scale=(0.7, 1.0)),
-            transforms.RandomHorizontalFlip(),
-            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.15),
-            transforms.ToTensor(),
-            transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-        ])
-    return transforms.Compose([
-        transforms.Resize(int(image_size * 1.15)),
-        transforms.CenterCrop(image_size),
-        transforms.ToTensor(),
-        transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-    ])
+def _train_tfm(cfg: "TrainConfig"):
+    return train_transform(image_size=cfg.image_size, randaug_num_ops=0)
 
 
 def _load_records() -> tuple[list, list, list, list[float]]:
@@ -91,9 +59,10 @@ def _load_records() -> tuple[list, list, list, list[float]]:
 
 def _build_loaders(cfg: TrainConfig):
     train, val, test, pw = _load_records()
-    train_ds = dd.build_torch_dataset(train, _transforms(cfg.image_size, train=True))
-    val_ds = dd.build_torch_dataset(val, _transforms(cfg.image_size, train=False))
-    test_ds = dd.build_torch_dataset(test, _transforms(cfg.image_size, train=False))
+    train_ds = dd.build_torch_dataset(train, _train_tfm(cfg))
+    val_tfm = eval_transform(cfg.image_size)
+    val_ds = dd.build_torch_dataset(val, val_tfm)
+    test_ds = dd.build_torch_dataset(test, val_tfm)
     common = dict(
         batch_size=cfg.batch_size, num_workers=cfg.num_workers,
         pin_memory=False, persistent_workers=cfg.num_workers > 0,
@@ -186,8 +155,8 @@ def train(
     smoke_batches: Optional[int] = None,
     training_catalog_id: Optional[str] = None,
 ) -> Path:
-    _seed_everything(cfg.seed)
-    device = _pick_device()
+    seed_everything(cfg.seed)
+    device = pick_device()
     print(f"[device] {device}")
 
     train_loader, val_loader, _test_loader, pos_weights = _build_loaders(cfg)

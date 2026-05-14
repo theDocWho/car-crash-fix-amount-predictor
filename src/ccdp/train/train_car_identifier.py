@@ -13,20 +13,15 @@ CLI is wired in ``ccdp.cli`` under ``ccdp train identifier``.
 
 from __future__ import annotations
 
-import json
-import os
-import random
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torchvision import transforms
 
 from ccdp.data import stanford_cars as sc
 from ccdp.models.identifier import (
@@ -41,9 +36,7 @@ from ccdp.registry import (
     update_metrics,
 )
 from ccdp.train.mixup import apply_mixup_or_cutmix, soft_cross_entropy
-
-IMAGENET_MEAN = (0.485, 0.456, 0.406)
-IMAGENET_STD = (0.229, 0.224, 0.225)
+from ccdp.utils import eval_transform, pick_device, seed_everything, train_transform
 
 
 @dataclass
@@ -69,47 +62,12 @@ class TrainConfig:
     label_smoothing: float = 0.1
 
 
-def _pick_device() -> torch.device:
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
-
-
-def _seed_everything(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
-def _transforms(image_size: int, train: bool,
-                randaug_num_ops: int = 2, randaug_magnitude: int = 9):
-    if train:
-        ops = [
-            transforms.Resize(int(image_size * 1.15)),
-            transforms.RandomResizedCrop(image_size, scale=(0.7, 1.0)),
-            transforms.RandomHorizontalFlip(),
-        ]
-        if randaug_num_ops > 0:
-            ops.append(transforms.RandAugment(
-                num_ops=randaug_num_ops, magnitude=randaug_magnitude,
-            ))
-        else:
-            ops.append(transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.15))
-        ops += [
-            transforms.ToTensor(),
-            transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-        ]
-        return transforms.Compose(ops)
-    return transforms.Compose([
-        transforms.Resize(int(image_size * 1.15)),
-        transforms.CenterCrop(image_size),
-        transforms.ToTensor(),
-        transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-    ])
+def _train_transform(cfg: "TrainConfig"):
+    return train_transform(
+        image_size=cfg.image_size,
+        randaug_num_ops=cfg.randaug_num_ops,
+        randaug_magnitude=cfg.randaug_magnitude,
+    )
 
 
 def _build_loaders(cfg: TrainConfig):
@@ -118,10 +76,8 @@ def _build_loaders(cfg: TrainConfig):
     train_samples, val_samples = sc.split_train_val(
         samples, val_fraction=cfg.val_fraction, seed=cfg.seed,
     )
-    train_tfm = _transforms(cfg.image_size, train=True,
-                            randaug_num_ops=cfg.randaug_num_ops,
-                            randaug_magnitude=cfg.randaug_magnitude)
-    val_tfm = _transforms(cfg.image_size, train=False)
+    train_tfm = _train_transform(cfg)
+    val_tfm = eval_transform(cfg.image_size)
     train_ds = sc.build_torch_dataset(train_samples, train_tfm)
     val_ds = sc.build_torch_dataset(val_samples, val_tfm)
     train_loader = DataLoader(
@@ -200,8 +156,8 @@ def train(
     training_catalog_id: Optional[str] = None,
 ) -> Path:
     """Run training and return the path of the best checkpoint."""
-    _seed_everything(cfg.seed)
-    device = _pick_device()
+    seed_everything(cfg.seed)
+    device = pick_device()
     print(f"[device] {device}")
 
     classes, train_loader, val_loader = _build_loaders(cfg)

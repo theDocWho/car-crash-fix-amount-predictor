@@ -103,21 +103,177 @@ Every prediction returns `damage_types`, `parts`, `cost_usd`, `tier`, `provenanc
 
 ---
 
-## What's in this repo
+## Project structure
 
 ```
-src/ccdp/
-├── data/            # standardized Record schema + dataset loaders (CarDD, comprehensive, iaai, Stanford Cars)
-├── identification/  # car-id pipeline (filename/EXIF/OCR/ML) + reference table + unidentified bucket
-├── costing/         # versioned parts-cost catalog + FX module + calibrator
-├── models/          # ResNet50 backbones (identifier + classifier) and XGBoost bundle
-├── train/           # trainers, feature extractors, synthetic cost-target generator, mixup/cutmix
-├── registry/        # checkpoint registry (run dirs, last/best symlinks, production/ symlinks)
-├── infer/           # Variant A and Variant B end-to-end pipelines
-└── cli.py           # `ccdp …` Typer CLI
+car-crash-fix-amount-predictor/
+├── PLAN.md                 — Full design document, all 4 phases
+├── CITATIONS.md            — Dataset attributions and licenses
+├── CONTRIBUTING.md         — Branch workflow + code style
+├── pyproject.toml          — Package metadata + dependency groups
+├── data/
+│   ├── raw/                — gitignored; populated by scripts/download_datasets.sh
+│   ├── processed/          — gitignored; feature parquets, reference table
+│   └── parts_cost_catalog/ — tracked YAMLs + active.yaml symlink
+├── notebooks/
+│   └── 01_eda.ipynb        — Dataset reconciliation, label distributions, samples
+├── scripts/
+│   ├── download_datasets.sh   — Kaggle CLI pull of all training corpora
+│   ├── train_all.sh           — Full training sequence (~4 hrs)
+│   └── extend_*.sh            — Resume / fine-tune helpers
+├── checkpoints/            — gitignored; trained weights + registry.json + production/ symlinks
+├── tests/                  — 64 pytest tests, all green
+├── progress/               — One file per phase with status, metrics, decisions
+└── src/ccdp/
+    ├── cli.py                       — Typer CLI; entrypoint `ccdp …`
+    ├── utils/
+    │   ├── device.py                — pick_device(), seed_everything()
+    │   └── transforms.py            — IMAGENET stats, train/eval transforms (with RandAugment)
+    ├── data/
+    │   ├── schema.py                — Record / BBox dataclasses, DAMAGE_TYPES, infer_part_from_damage()
+    │   ├── loaders.py               — iter_cardd / iter_comprehensive / iter_iaai generators
+    │   ├── stanford_cars.py         — .mat parser, 90/10 stratified split, torchvision Dataset
+    │   ├── damage_dataset.py        — CarDD multi-label encoding + pos_weight + Dataset
+    │   └── cardd_yolo.py            — COCO -> Ultralytics YOLO directory converter
+    ├── identification/
+    │   ├── car_identifier.py        — Filename / EXIF / OCR / color heuristics; IdentificationResult
+    │   ├── reference_table.py       — (make,model,year,body)→cost table, nearest() lookup
+    │   ├── build_reference.py       — Build reference table from iaai metadata
+    │   ├── unidentified.py          — SQLite bucket with auto-naming + relabelling API
+    │   └── fallback_estimator.py    — Three-tier estimator (exact / nearest_class / category_only)
+    ├── costing/
+    │   ├── catalog.py               — Versioned YAML catalogs, save / load / activate / diff
+    │   ├── fx.py                    — USD↔INR fetch with cache + manual override
+    │   └── calibrator.py            — Scale prediction by active_median / training_median
+    ├── models/
+    │   ├── identifier.py            — ResNet50 head (196 classes) + two-stage finetune toggle
+    │   ├── damage_classifier.py     — ResNet50 head (6 damage types) + feature extractor
+    │   └── xgb_regressor.py         — XGBRegressorBundle (schema + training catalog id)
+    ├── train/
+    │   ├── train_car_identifier.py     — Identifier trainer (RandAugment + MixUp + CutMix)
+    │   ├── train_damage_classifier.py  — Classifier trainer (BCE + pos_weight)
+    │   ├── train_yolov8.py             — Detector trainer (Ultralytics wrapper)
+    │   ├── train_xgb.py                — XGBoost(A|B) trainer + metric reporting
+    │   ├── mixup.py                    — Batch-level MixUp / CutMix + soft_cross_entropy
+    │   ├── extract_features.py         — Classifier backbone → 2048-d image features
+    │   ├── extract_bbox_features.py    — Detector bboxes → per-image bbox stats
+    │   └── synthesize_cost.py          — Sample metadata + compute catalog-driven cost target
+    ├── registry/
+    │   └── registry.py              — create_run / save_checkpoint / promote / list_entries
+    └── infer/
+        ├── base.py                  — BaseVariantPipeline: XGBoost loading + FX + provenance
+        ├── variant_a.py             — VariantAPipeline (classifier-only, no localization)
+        └── variant_b.py             — VariantBPipeline (detector + bbox-aware XGBoost)
 ```
 
-See [PLAN.md §10](PLAN.md) for the full layout, [progress/](progress/) for per-phase status docs, and [CITATIONS.md](CITATIONS.md) for dataset attributions.
+Phase status: see [progress/STATUS.md](progress/STATUS.md). Full design rationale: [PLAN.md](PLAN.md).
+
+---
+
+## Execution flow
+
+### Training (run once, then promote the winning runs)
+
+```
+download_datasets.sh  ─►  data/raw/{cardd, stanford_cars, iaai, comprehensive}
+                              │
+              ┌───────────────┼────────────────────────────────────────┐
+              ▼               ▼                                        ▼
+    ccdp train classifier   ccdp train detector              ccdp train identifier
+    (ResNet50 6-class       (YOLOv8n on CarDD COCO          (ResNet50 on Stanford
+     multi-label,            -> YOLO bboxes,                 Cars, RandAugment +
+     BCE + pos_weight)       50 epochs)                      MixUp + CutMix)
+              │                       │                              │
+              ▼                       ▼                              ▼
+    classifier.pt          detector.pt                      identifier.pt
+              │                       │                              │
+              │                ccdp train extract-bbox-features      │
+              ccdp train extract-features                            │
+              ccdp train synth-targets                               │
+                            │                                        │
+                  ┌─────────┴──────────┐                              │
+                  ▼                    ▼                              │
+    ccdp train xgb         ccdp train xgb                             │
+       --variant a            --variant b                             │
+                  │                    │                              │
+                  ▼                    ▼                              │
+              xgb_a.ubj            xgb_b.ubj                          │
+                  │                    │                              │
+                  └────────────────────┴──── ccdp registry promote ───┘
+                                                       │
+                                                       ▼
+                                         checkpoints/production/*.pt
+                                         (symlinks consumed by inference)
+```
+
+Total wall-clock target on M-series 16GB: **~4 hours** unattended via
+`scripts/train_all.sh`. See [progress/STATUS.md](progress/STATUS.md) for the
+exact achieved metrics per phase.
+
+### Inference (single image)
+
+```
+image + optional (make, model, year, body_type)
+      │
+      ▼
+ccdp infer  ─►  one of:
+    --model resnet  ──►  VariantAPipeline
+    --model yolov8  ──►  VariantBPipeline
+    --model both    ──►  runs both, returns both
+
+Each Variant pipeline:
+
+  image ──► classifier (Variant A & B both call it for the 2048-d backbone features)
+       │
+       │      Variant B also: image ──► YOLOv8 detector ──► bboxes ──► bbox_stats
+       │                                              └──► parts via infer_part_from_damage(damage_type, bbox_center, body_type)
+       │
+       ▼
+  feature row (image features [+ bbox stats for B] + tabular metadata one-hot)
+       │
+       ▼
+  XGBoost(A|B) ──► raw cost prediction
+       │
+       ▼
+  Calibrator: cost × (active_catalog.median / training_catalog.median)
+       │
+       ▼
+  FX module: convert USD → requested currency
+       │
+       ▼
+  PredictionA / PredictionB with full provenance:
+     damage_types, parts, cost, currency, tier, provenance,
+     catalog_id, fx_snapshot, bundle_run_id (+ detections for B)
+```
+
+If no identification metadata or no XGBoost bundle is available, the pipeline
+falls through to the three-tier **catalog-only** fallback estimator
+(`identification/fallback_estimator.py`) which produces a tier-3
+"category-only" estimate. This is the system's honest behaviour for cars whose
+make/model can't be identified — see [PLAN.md §6](PLAN.md).
+
+### Catalog updates without retraining
+
+```
+new prices arrive          (e.g. mid-quarter body-shop price refresh)
+      │
+      ▼
+ccdp costing import --file new_prices.csv --tag q2-update
+      │
+      ▼
+new catalog YAML lands in data/parts_cost_catalog/
+      │
+      ▼
+ccdp costing activate <new_catalog_id>
+      │
+      ▼
+next ccdp infer call: Calibrator scales XGBoost output to the new catalog.
+NO MODEL RETRAINING NEEDED.
+```
+
+The XGBoost bundle records its training-time catalog id; the Calibrator does
+the math at inference. This is why the catalog is versioned and the bundle
+carries `training_catalog_id` and `training_median`.
 
 ---
 
@@ -133,6 +289,10 @@ Documented in detail in [PLAN.md §3](PLAN.md) and the phase docs under [progres
 When real cost data becomes available (e.g., a research-access slice from Rebrowser's IAAI dataset, or an authoritative body-shop pricing table), swap the catalog via `ccdp costing import` and existing models continue to work via the calibrator.
 
 ---
+
+## Contributing
+
+This is a capstone but contributions are welcome — read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR. Short version: no commits to `main`; every change goes on a `checkpoint-<N>-<short-desc>` branch and merges only after review.
 
 ## License
 

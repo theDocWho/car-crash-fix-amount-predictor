@@ -1,42 +1,42 @@
-"""End-to-end Variant A inference: image -> damage types -> parts -> cost.
+"""End-to-end Variant A inference.
 
-Loads the promoted classifier checkpoint + the promoted XGBoost(A) bundle.
-Falls back gracefully to catalog-only Tier-3 if either is missing.
+Pipeline: image → ResNet50 multi-label classifier → damage types → optional
+XGBoost(A) cost prediction (with calibrator + FX) → :class:`PredictionA`.
+
+Falls back to the catalog-based three-tier estimator (Tier 3 "category only")
+when no XGBoost bundle or no identification metadata is available, so the
+pipeline is always usable end-to-end.
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
 import torch
 from PIL import Image
-from torchvision import transforms
 
-from ccdp.costing import Calibrator, Catalog, load_active
-from ccdp.costing import fx as fxmod
+from ccdp.costing import Catalog, load_active
 from ccdp.data.schema import DAMAGE_TYPES, infer_part_from_damage
 from ccdp.identification.car_identifier import IdentificationResult
 from ccdp.identification.fallback_estimator import estimate as fallback_estimate
+from ccdp.infer.base import BaseVariantPipeline
 from ccdp.models.damage_classifier import build_damage_classifier, extract_features
-from ccdp.models.xgb_regressor import XGBRegressorBundle, make_feature_matrix
 from ccdp.registry import load_checkpoint, production_target
-
-IMAGENET_MEAN = (0.485, 0.456, 0.406)
-IMAGENET_STD = (0.229, 0.224, 0.225)
+from ccdp.utils import eval_transform, pick_device
 
 
 @dataclass
 class PredictionA:
+    """Structured response from :meth:`VariantAPipeline.predict`."""
+
     damage_types: list[str]
     parts: list[str]
     cost_usd: float
     currency: str
     cost: float
-    tier: str                                # 'exact' | 'nearest_class' | 'category_only' | 'xgb_a'
+    tier: str                                # 'exact' | 'nearest_class' | 'category_only'
     provenance: str
     catalog_id: Optional[str] = None
     fx_snapshot: dict = field(default_factory=dict)
@@ -45,29 +45,13 @@ class PredictionA:
     warning: Optional[str] = None
 
     def to_dict(self) -> dict:
-        d = self.__dict__.copy()
-        return d
+        return self.__dict__.copy()
 
 
-def _pick_device() -> torch.device:
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
+class VariantAPipeline(BaseVariantPipeline):
+    """Image-only damage recognition + cost regression (no localization)."""
 
-
-def _eval_transform(image_size: int = 224):
-    return transforms.Compose([
-        transforms.Resize(int(image_size * 1.15)),
-        transforms.CenterCrop(image_size),
-        transforms.ToTensor(),
-        transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-    ])
-
-
-class VariantAPipeline:
-    """Stateful loader so the FastAPI/Gradio paths don't reload weights per call."""
+    xgb_variant_name = "xgb_a"
 
     def __init__(
         self,
@@ -75,38 +59,20 @@ class VariantAPipeline:
         xgb_bundle_dir: Optional[Path] = None,
         device: Optional[torch.device] = None,
     ):
-        self.device = device or _pick_device()
+        super().__init__(xgb_bundle_dir=xgb_bundle_dir)
+        self.device = device or pick_device()
         self.classifier_ckpt = classifier_ckpt or production_target("classifier")
-        self.xgb_bundle_dir = xgb_bundle_dir
-        if self.xgb_bundle_dir is None:
-            prod = production_target("xgb_a")
-            self.xgb_bundle_dir = prod.parent if prod else None
-
-        self.transform = _eval_transform(224)
-        self.model = build_damage_classifier(num_classes=len(DAMAGE_TYPES),
-                                             pretrained=(self.classifier_ckpt is None))
+        self.classifier = build_damage_classifier(
+            num_classes=len(DAMAGE_TYPES),
+            pretrained=(self.classifier_ckpt is None),
+        )
         if self.classifier_ckpt and Path(self.classifier_ckpt).exists():
-            ck = load_checkpoint(Path(self.classifier_ckpt), map_location=str(self.device))
-            self.model.load_state_dict(ck["model"])
-        self.model = self.model.to(self.device).eval()
+            checkpoint = load_checkpoint(Path(self.classifier_ckpt), map_location=str(self.device))
+            self.classifier.load_state_dict(checkpoint["model"])
+        self.classifier = self.classifier.to(self.device).eval()
+        self.transform = eval_transform(224)
 
-        self.xgb_model = None
-        self.xgb_bundle: Optional[XGBRegressorBundle] = None
-        if self.xgb_bundle_dir and (Path(self.xgb_bundle_dir) / "bundle.json").exists():
-            self._load_xgb()
-
-    def _load_xgb(self) -> None:
-        import xgboost as xgb
-        bundle_dir = Path(self.xgb_bundle_dir)
-        booster_path = bundle_dir / "best.ubj"
-        if not booster_path.exists():
-            return
-        self.xgb_model = xgb.Booster()
-        self.xgb_model.load_model(str(booster_path))
-        with (bundle_dir / "bundle.json").open() as f:
-            self.xgb_bundle = XGBRegressorBundle.from_dict(json.load(f))
-
-    # -----------------------------------------------------------------
+    # -- public API --------------------------------------------------------
 
     def predict(
         self,
@@ -116,95 +82,111 @@ class VariantAPipeline:
         currency: str = "USD",
         catalog: Optional[Catalog] = None,
     ) -> PredictionA:
+        """Run end-to-end inference on a single image.
+
+        Steps:
+          1. Forward the image through the classifier; threshold sigmoid probs.
+          2. Forward through the backbone-only path to extract 2048-d features.
+          3. If we have XGBoost + identification metadata, predict cost with it;
+             otherwise call the three-tier catalog fallback.
+          4. Currency-convert + assemble the response with full provenance.
+        """
         catalog = catalog or load_active()
-        img = Image.open(image_path).convert("RGB")
-        x = self.transform(img).unsqueeze(0).to(self.device)
 
-        with torch.no_grad():
-            logits = self.model(x)
-            probs = torch.sigmoid(logits).cpu().numpy().flatten()
-            feats = extract_features(self.model, x).cpu().numpy().flatten()
+        damage_types, probabilities, image_features = self._forward(image_path)
+        parts = self._infer_parts(damage_types)
 
-        damage_types = [DAMAGE_TYPES[i] for i, p in enumerate(probs) if p >= threshold]
-        prob_dict = {DAMAGE_TYPES[i]: float(probs[i]) for i in range(len(DAMAGE_TYPES))}
-
-        # parts derived from damage_types (no bbox info in Variant A)
-        loc = (metadata.body_type if metadata else "unknown")
-        parts: list[str] = []
-        for dt in damage_types:
-            p = infer_part_from_damage(dt, bbox_center=None, damage_location="unknown")
-            if p:
-                parts.append(p)
-
-        # Tier-1/2 via XGBoost if available and we have metadata
-        if self.xgb_model is not None and self.xgb_bundle is not None and metadata and metadata.make:
-            cost_usd, tier, provenance = self._xgb_predict(feats, metadata, catalog)
-            warning = None
-        else:
-            est = fallback_estimate(
-                parts_with_severity={p: "moderate" for p in parts},
-                identification=metadata,
-                catalog=catalog,
+        if self._can_use_xgb(metadata):
+            cost_usd, tier, provenance = self._predict_via_xgb(
+                image_features, metadata, catalog,
             )
-            cost_usd, tier, provenance = est.cost_usd, est.tier, est.provenance
-            warning = est.warning
+            warning: Optional[str] = None
+        else:
+            cost_usd, tier, provenance, warning = self._predict_via_catalog(
+                parts, metadata, catalog,
+            )
 
-        # currency conversion
-        out_amount, fx_used = fxmod.convert(cost_usd, "USD", currency)
-        fx_snap = {} if fx_used is None else {
-            "rate": fx_used.rate, "base": fx_used.base, "target": fx_used.target,
-            "source": fx_used.source, "fetched_at": fx_used.fetched_at,
-        }
+        amount, fx_snapshot = self.convert_currency(cost_usd, currency)
 
         return PredictionA(
             damage_types=damage_types,
             parts=parts,
             cost_usd=round(cost_usd, 2),
             currency=currency.upper(),
-            cost=round(out_amount, 2),
+            cost=round(amount, 2),
             tier=tier,
             provenance=provenance,
             catalog_id=catalog.catalog_id,
-            fx_snapshot=fx_snap,
-            probabilities=prob_dict,
+            fx_snapshot=fx_snapshot,
+            probabilities=probabilities,
             bundle_run_id=(Path(self.xgb_bundle_dir).name if self.xgb_bundle_dir else None),
             warning=warning,
         )
 
-    def _xgb_predict(
+    # -- internals --------------------------------------------------------
+
+    def _forward(self, image_path: str | Path):
+        """Single forward pass; returns (damage_types, prob_dict, 2048-d features)."""
+        img = Image.open(image_path).convert("RGB")
+        x = self.transform(img).unsqueeze(0).to(self.device)
+        with torch.no_grad():
+            logits = self.classifier(x)
+            probs = torch.sigmoid(logits).cpu().numpy().flatten()
+            features = extract_features(self.classifier, x).cpu().numpy().flatten()
+        damage_types = [
+            DAMAGE_TYPES[i] for i, p in enumerate(probs) if p >= 0.5
+        ]
+        prob_dict = {DAMAGE_TYPES[i]: float(probs[i]) for i in range(len(DAMAGE_TYPES))}
+        return damage_types, prob_dict, features
+
+    @staticmethod
+    def _infer_parts(damage_types: list[str]) -> list[str]:
+        """Map damage types to likely parts without bbox info (Variant A has none).
+
+        Returns an empty list when no mapping is possible — caller treats the
+        empty list as "no localization data; defer to fallback estimator".
+        """
+        parts: list[str] = []
+        for dt in damage_types:
+            part = infer_part_from_damage(dt, bbox_center=None, damage_location="unknown")
+            if part:
+                parts.append(part)
+        return parts
+
+    def _can_use_xgb(self, metadata: Optional[IdentificationResult]) -> bool:
+        """XGBoost is usable only when a bundle is loaded AND we have a make."""
+        if self.xgb_model is None or self.xgb_bundle is None:
+            return False
+        return metadata is not None and metadata.make is not None
+
+    def _predict_via_xgb(
         self,
-        feats: np.ndarray,
+        features,
         metadata: IdentificationResult,
         catalog: Catalog,
     ) -> tuple[float, str, str]:
-        import pandas as pd
-        bundle = self.xgb_bundle
-        row = {f"f_{i}": float(v) for i, v in enumerate(feats)}
+        """Build the XGBoost(A) feature row and delegate to BaseVariantPipeline."""
+        if self.xgb_model is None or self.xgb_bundle is None:
+            raise RuntimeError("XGBoost not available; check `_can_use_xgb` upstream.")
+        row = {f"f_{i}": float(v) for i, v in enumerate(features)}
         row.update({
             "year": metadata.year or 2015,
             "make": metadata.make or "unknown",
             "body_type": metadata.body_type or "unknown",
             "segment": metadata.segment or "unknown",
         })
-        df = pd.DataFrame([row])
-        X = make_feature_matrix(df, bundle)
-        pred = float(self.xgb_model.predict(self._dmatrix(X))[0])
+        return self.run_xgb(row, confidence=(metadata.confidence or 0.0), catalog=catalog)
 
-        # Catalog drift calibration
-        if bundle.training_median:
-            cal = Calibrator(training_catalog_id=bundle.training_catalog_id or "unknown",
-                             training_median=bundle.training_median)
-            scaled = cal.scale(pred, catalog)
-        else:
-            scaled = pred
-
-        tier = "exact" if (metadata.confidence or 0) >= 0.6 else "nearest_class"
-        provenance = (
-            f"xgb_a({tier}); training_catalog={bundle.training_catalog_id}; "
-            f"calibrated to {catalog.catalog_id}"
+    @staticmethod
+    def _predict_via_catalog(
+        parts: list[str],
+        metadata: Optional[IdentificationResult],
+        catalog: Catalog,
+    ) -> tuple[float, str, str, Optional[str]]:
+        """Fallback path: three-tier estimator using only the catalog."""
+        est = fallback_estimate(
+            parts_with_severity={p: "moderate" for p in parts},
+            identification=metadata,
+            catalog=catalog,
         )
-        return scaled, tier, provenance
-
-    def _dmatrix(self, X):
-        import xgboost as xgb
-        return xgb.DMatrix(X.values, feature_names=list(X.columns))
+        return est.cost_usd, est.tier, est.provenance, est.warning
