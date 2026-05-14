@@ -28,7 +28,15 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
+
+# HuggingFace Spaces run `app.py` from the repo root without installing the
+# local `ccdp` package. Our source lives under `src/ccdp/`, so we add `src/`
+# to sys.path here — before any `ccdp` import — so the bootstrap works
+# whether or not `pip install -e .` was run.
+_REPO_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 WEIGHTS_DIR = Path("checkpoints/production")
 CATALOG_DIR = Path("data/parts_cost_catalog")
