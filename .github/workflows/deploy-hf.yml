@@ -23,13 +23,18 @@ jobs:
           fetch-depth: 0
           lfs: false
 
-      - name: Prepend HF Space metadata to README
+      - name: Prepend HF Space metadata to README and commit
         env:
           HF_USERNAME: ${{ vars.HF_USERNAME }}
         run: |
           set -euo pipefail
           # HF Spaces require YAML frontmatter at the top of README.md.
-          # We synthesize it here so the GitHub copy stays clean (no leading YAML).
+          # We synthesize it here and COMMIT it so `git push` actually carries
+          # the change to HF (a working-tree edit alone is invisible to push).
+          # We git-config first because we're about to commit.
+          git config user.name  "${HF_USERNAME}"
+          git config user.email "${HF_USERNAME}@users.noreply.huggingface.co"
+
           cat > _hf_README.md <<EOF
           ---
           title: Car Crash Fix Amount Predictor
@@ -47,6 +52,8 @@ jobs:
           EOF
           cat README.md >> _hf_README.md
           mv _hf_README.md README.md
+          git add README.md
+          git commit -m "HF: prepend Space frontmatter (CI-generated, not on main)"
 
       - name: Push to HuggingFace Space
         env:
@@ -55,9 +62,6 @@ jobs:
         run: |
           set -euo pipefail
           SPACE="${HF_USERNAME}/car-crash-fix-amount-predictor"
-          # Configure git with the HF user
-          git config user.name  "${HF_USERNAME}"
-          git config user.email "${HF_USERNAME}@users.noreply.huggingface.co"
           # Add HF Space as a remote (created on first push if it doesn't exist
           # — but only when using `huggingface-cli`. To be safe, the Space
           # should be created once manually at huggingface.co/new-space, or via
