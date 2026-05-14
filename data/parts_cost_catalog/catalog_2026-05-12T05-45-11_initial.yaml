@@ -1,0 +1,210 @@
+catalog_id: 2026-05-12T05-45-11_initial
+created_at: '2026-05-12T05:45:11.621893+00:00'
+created_by: ccdp init
+source: Bootstrap seed. Bootstrap medians from publicly-reported repair averages;
+  replace with iaai/ganeshsura-derived medians once raw data is processed, via `ccdp
+  costing import --from-dataset iaai`.
+currency: USD
+fx_snapshot: {}
+labor_rate_per_hour:
+  economy: 65.0
+  mid: 95.0
+  luxury: 165.0
+parts:
+  front_bumper:
+    base_cost:
+      economy: 280
+      mid: 520
+      luxury: 1450
+    severity_multiplier:
+      minor: 0.4
+      moderate: 1.0
+      severe: 1.8
+    labor_hours:
+      minor: 1.5
+      moderate: 4.0
+      severe: 8.0
+  rear_bumper:
+    base_cost:
+      economy: 260
+      mid: 490
+      luxury: 1380
+    severity_multiplier:
+      minor: 0.4
+      moderate: 1.0
+      severe: 1.8
+    labor_hours:
+      minor: 1.5
+      moderate: 4.0
+      severe: 8.0
+  hood:
+    base_cost:
+      economy: 340
+      mid: 610
+      luxury: 1820
+    severity_multiplier:
+      minor: 0.5
+      moderate: 1.0
+      severe: 1.9
+    labor_hours:
+      minor: 2.0
+      moderate: 5.0
+      severe: 10.0
+  front_door:
+    base_cost:
+      economy: 410
+      mid: 720
+      luxury: 1950
+    severity_multiplier:
+      minor: 0.5
+      moderate: 1.0
+      severe: 2.0
+    labor_hours:
+      minor: 2.0
+      moderate: 5.0
+      severe: 11.0
+  rear_door:
+    base_cost:
+      economy: 390
+      mid: 690
+      luxury: 1880
+    severity_multiplier:
+      minor: 0.5
+      moderate: 1.0
+      severe: 2.0
+    labor_hours:
+      minor: 2.0
+      moderate: 5.0
+      severe: 11.0
+  front_fender:
+    base_cost:
+      economy: 220
+      mid: 410
+      luxury: 1180
+    severity_multiplier:
+      minor: 0.4
+      moderate: 1.0
+      severe: 1.8
+    labor_hours:
+      minor: 1.5
+      moderate: 4.0
+      severe: 9.0
+  rear_quarter_panel:
+    base_cost:
+      economy: 520
+      mid: 880
+      luxury: 2350
+    severity_multiplier:
+      minor: 0.5
+      moderate: 1.0
+      severe: 2.1
+    labor_hours:
+      minor: 3.0
+      moderate: 7.0
+      severe: 14.0
+  headlight:
+    base_cost:
+      economy: 180
+      mid: 420
+      luxury: 1650
+    severity_multiplier:
+      minor: 0.3
+      moderate: 1.0
+      severe: 1.0
+    labor_hours:
+      minor: 0.5
+      moderate: 1.5
+      severe: 2.5
+  taillight:
+    base_cost:
+      economy: 130
+      mid: 290
+      luxury: 1080
+    severity_multiplier:
+      minor: 0.3
+      moderate: 1.0
+      severe: 1.0
+    labor_hours:
+      minor: 0.5
+      moderate: 1.5
+      severe: 2.5
+  windshield:
+    base_cost:
+      economy: 320
+      mid: 540
+      luxury: 1480
+    severity_multiplier:
+      minor: 0.3
+      moderate: 1.0
+      severe: 1.0
+    labor_hours:
+      minor: 1.0
+      moderate: 2.0
+      severe: 3.0
+  side_mirror:
+    base_cost:
+      economy: 95
+      mid: 210
+      luxury: 720
+    severity_multiplier:
+      minor: 0.3
+      moderate: 1.0
+      severe: 1.0
+    labor_hours:
+      minor: 0.5
+      moderate: 1.0
+      severe: 1.5
+  roof:
+    base_cost:
+      economy: 580
+      mid: 960
+      luxury: 2780
+    severity_multiplier:
+      minor: 0.6
+      moderate: 1.0
+      severe: 2.2
+    labor_hours:
+      minor: 3.0
+      moderate: 8.0
+      severe: 18.0
+  trunk:
+    base_cost:
+      economy: 380
+      mid: 640
+      luxury: 1820
+    severity_multiplier:
+      minor: 0.5
+      moderate: 1.0
+      severe: 1.9
+    labor_hours:
+      minor: 2.0
+      moderate: 5.0
+      severe: 10.0
+  wheel:
+    base_cost:
+      economy: 160
+      mid: 320
+      luxury: 980
+    severity_multiplier:
+      minor: 0.3
+      moderate: 1.0
+      severe: 1.0
+    labor_hours:
+      minor: 0.5
+      moderate: 1.0
+      severe: 1.5
+  grille:
+    base_cost:
+      economy: 180
+      mid: 360
+      luxury: 1120
+    severity_multiplier:
+      minor: 0.4
+      moderate: 1.0
+      severe: 1.6
+    labor_hours:
+      minor: 0.5
+      moderate: 1.5
+      severe: 3.0
+notes: Tier 3 fallback values only. Real per-vehicle estimates come from the trained
+  XGBoost regressor calibrated to this catalog.

@@ -1,0 +1,38 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+.DS_Store
+.ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Data and artifacts (do not commit)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/fx_cache.json
+data/unidentified_cars.db
+checkpoints/*
+!checkpoints/.gitkeep
+reports/*
+!reports/.gitkeep
+
+logs/
+runs/
+
+# Ultralytics auto-downloads pretrained weights to CWD on first `YOLO(...)` call.
+# These are upstream weights, not our trained artifacts (which live in checkpoints/).
+/yolov8*.pt
+/yolo11*.pt
+
+# Keep catalog versions tracked
+!data/parts_cost_catalog/
+!data/parts_cost_catalog/*.yaml
