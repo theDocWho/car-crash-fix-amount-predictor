@@ -12,36 +12,15 @@ import time
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from torchvision import transforms
 
 from ccdp.data import damage_dataset as dd
 from ccdp.data.loaders import iter_cardd
 from ccdp.data.schema import DAMAGE_TYPES
 from ccdp.models.damage_classifier import build_damage_classifier, extract_features
 from ccdp.registry import load_checkpoint, production_target
-
-IMAGENET_MEAN = (0.485, 0.456, 0.406)
-IMAGENET_STD = (0.229, 0.224, 0.225)
-
-
-def _pick_device() -> torch.device:
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
-
-
-def _eval_transform(image_size: int = 224):
-    return transforms.Compose([
-        transforms.Resize(int(image_size * 1.15)),
-        transforms.CenterCrop(image_size),
-        transforms.ToTensor(),
-        transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-    ])
+from ccdp.utils import eval_transform, pick_device
 
 
 def extract_all(
@@ -60,7 +39,7 @@ def extract_all(
     """
     import pandas as pd
 
-    device = _pick_device()
+    device = pick_device()
     print(f"[device] {device}")
 
     if checkpoint is None:
@@ -81,7 +60,7 @@ def extract_all(
     rows: list[dict] = []
     t0 = time.time()
     for split_name, recs in splits.items():
-        ds = dd.build_torch_dataset(recs, _eval_transform(image_size))
+        ds = dd.build_torch_dataset(recs, eval_transform(image_size))
         loader = DataLoader(ds, batch_size=batch_size, num_workers=num_workers, shuffle=False)
         offset = 0
         for batch_i, (xb, _yb) in enumerate(loader):
