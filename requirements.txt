@@ -27,3 +27,8 @@ fastapi>=0.110
 uvicorn>=0.27
 gradio>=4.20
 python-multipart>=0.0.9
+
+# audioop was removed from the stdlib in Python 3.13. Gradio's pydub dependency
+# still expects it. We pin python_version=3.11 in the HF Space frontmatter so
+# this should never fire there, but this guards against running on 3.13+ anywhere.
+audioop-lts>=0.2.1; python_version >= "3.13"
