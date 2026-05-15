@@ -26,6 +26,7 @@ from ccdp.costing import fx as fxmod
 from ccdp.costing import list_catalogs
 from ccdp.identification.car_identifier import IdentificationResult, infer_segment
 from ccdp.preprocess import preprocess
+from ccdp.viz import annotate_prediction
 
 
 # ---------------------------------------------------------------------------
@@ -82,16 +83,23 @@ def _estimate(
     model_name: str,
     year: Optional[int],
     body_type: str,
-) -> tuple[str, str, str]:
-    """Returns (variant_a_summary, variant_b_summary, full_json)."""
+) -> tuple[Image.Image, str, str, str]:
+    """Returns (annotated_image, variant_a_summary, variant_b_summary, full_json).
+
+    The annotated image is the user's upload with Variant B detector boxes
+    drawn on it. If Variant B is unavailable or finds nothing, we fall back
+    to returning the preprocessed image untouched so the UI still has
+    something to render.
+    """
     if image is None:
-        return "Please upload an image.", "", ""
+        return None, "Please upload an image.", "", ""
     pipes = _get_pipelines()
     pil_image, preprocessing_meta = preprocess(image)
     metadata = _build_metadata(make, model_name, year, body_type)
 
     full: dict = {"preprocessing": preprocessing_meta}
     a_text, b_text = "Variant A not loaded.", "Variant B not loaded."
+    annotated = pil_image  # default: no boxes
 
     if model_choice in ("Variant A (ResNet50 classifier)", "Both"):
         if pipes.get("a"):
@@ -101,11 +109,13 @@ def _estimate(
 
     if model_choice in ("Variant B (YOLOv8 detector)", "Both"):
         if pipes.get("b"):
-            pred = pipes["b"].predict(pil_image, metadata=metadata, currency=currency).to_dict()
+            pred_b = pipes["b"].predict(pil_image, metadata=metadata, currency=currency)
+            pred = pred_b.to_dict()
             full["variant_b"] = pred
             b_text = _format_prediction("B", pred)
+            annotated = annotate_prediction(pil_image, pred_b)
 
-    return a_text, b_text, json.dumps(full, indent=2, default=str)
+    return annotated, a_text, b_text, json.dumps(full, indent=2, default=str)
 
 
 def _format_prediction(name: str, pred: dict) -> str:
@@ -213,6 +223,11 @@ def build_demo() -> gr.Blocks:
                         )
                     run_btn = gr.Button("Estimate", variant="primary")
                 with gr.Column(scale=1):
+                    annotated_out = gr.Image(
+                        type="pil",
+                        label="Detected damage (Variant B boxes)",
+                        interactive=False,
+                    )
                     variant_a_out = gr.Markdown(label="Variant A")
                     variant_b_out = gr.Markdown(label="Variant B")
             with gr.Accordion("Full JSON (provenance, probabilities, detections)", open=False):
@@ -221,7 +236,7 @@ def build_demo() -> gr.Blocks:
             run_btn.click(
                 _estimate,
                 inputs=[image_in, model_choice, currency, make, model_name, year, body_type],
-                outputs=[variant_a_out, variant_b_out, json_out],
+                outputs=[annotated_out, variant_a_out, variant_b_out, json_out],
             )
 
         with gr.Tab("Catalog manager"):
