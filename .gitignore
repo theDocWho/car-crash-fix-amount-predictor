@@ -36,3 +36,4 @@ runs/
 # Keep catalog versions tracked
 !data/parts_cost_catalog/
 !data/parts_cost_catalog/*.yaml
+.train.*
