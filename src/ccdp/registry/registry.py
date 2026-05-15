@@ -135,9 +135,30 @@ def list_entries(variant: Optional[str] = None) -> list[dict[str, Any]]:
 
 
 def production_target(variant: str) -> Optional[Path]:
+    """Resolve the production weights path for ``variant``.
+
+    Two lookup paths so this works both for full local development (where
+    ``registry.json`` has a populated ``production`` dict) and for stripped-
+    down deployments like the HuggingFace Space (where ``registry.json`` is
+    not shipped — it's in ``.gitignore`` — and weights are dropped directly
+    into ``checkpoints/production/{variant}.pt`` by the boot script):
+
+      1. Registry index — authoritative when present.
+      2. ``checkpoints/production/{variant}.pt`` on disk — fallback so the
+         models actually load on HF. Without this, VariantBPipeline raised
+         FileNotFoundError and VariantAPipeline silently fell back to an
+         *untrained* ImageNet ResNet50 with a random 6-output head — every
+         prediction was noise. (Bug latent since v0.1.0; this is the fix.)
+    """
     idx = _load_index()
     target = idx.get("production", {}).get(variant)
-    return Path(target) if target else None
+    if target:
+        return Path(target)
+    # File-on-disk fallback for deployments without a registry.
+    candidate = CHECKPOINTS_ROOT / "production" / f"{variant}.pt"
+    if candidate.exists() or candidate.is_symlink():
+        return candidate
+    return None
 
 
 def promote(run_id: str, variant: str, weights_filename: str = "best.pt") -> Path:
