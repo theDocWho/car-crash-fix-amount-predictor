@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import Response
 
 from ccdp.api.schemas import (
     CatalogEntry,
@@ -35,6 +36,7 @@ from ccdp.identification.car_identifier import IdentificationResult, infer_segme
 from ccdp.infer.variant_a import VariantAPipeline
 from ccdp.preprocess import preprocess
 from ccdp.utils import pick_device
+from ccdp.viz import annotate_prediction
 
 
 # ---------------------------------------------------------------------------
@@ -232,3 +234,37 @@ async def estimate(
             ).to_dict()
 
     return response
+
+
+# ---------------------------------------------------------------------------
+# Annotated image — same flow as /estimate but returns a PNG with boxes drawn
+# ---------------------------------------------------------------------------
+
+
+@app.post("/estimate/annotated",
+          responses={200: {"content": {"image/png": {}}}, 503: {}, 400: {}})
+async def estimate_annotated(
+    image: UploadFile = File(..., description="JPEG or PNG car damage image"),
+) -> Response:
+    """Return the uploaded image with YOLOv8 damage boxes overlaid as PNG.
+
+    Always runs Variant B because that's the only variant producing boxes.
+    """
+    raw = await image.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty upload")
+    try:
+        pil_image, _ = preprocess(raw)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Could not decode image: {e}")
+
+    pipe = _state.get("variant_b")
+    if pipe is None:
+        raise HTTPException(status_code=503, detail="Variant B model not loaded")
+
+    pred = pipe.predict(pil_image, metadata=None, currency="USD")
+    annotated = annotate_prediction(pil_image, pred)
+
+    buf = io.BytesIO()
+    annotated.save(buf, format="PNG")
+    return Response(content=buf.getvalue(), media_type="image/png")
