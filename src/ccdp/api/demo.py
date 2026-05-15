@@ -79,6 +79,8 @@ def _estimate(
     image: Image.Image,
     model_choice: str,
     currency: str,
+    classifier_threshold: float,
+    detector_conf: float,
     make: str,
     model_name: str,
     year: Optional[int],
@@ -87,9 +89,9 @@ def _estimate(
     """Returns (annotated_image, variant_a_summary, variant_b_summary, full_json).
 
     The annotated image is the user's upload with Variant B detector boxes
-    drawn on it. If Variant B is unavailable or finds nothing, we fall back
-    to returning the preprocessed image untouched so the UI still has
-    something to render.
+    drawn on it. If the detector finds nothing, the image is overlaid with
+    a clear 'No damage detected' banner so the user can tell that the
+    detector ran and produced an empty result (vs. failing silently).
     """
     if image is None:
         return None, "Please upload an image.", "", ""
@@ -97,37 +99,66 @@ def _estimate(
     pil_image, preprocessing_meta = preprocess(image)
     metadata = _build_metadata(make, model_name, year, body_type)
 
-    full: dict = {"preprocessing": preprocessing_meta}
+    full: dict = {
+        "preprocessing": preprocessing_meta,
+        "thresholds": {
+            "classifier": classifier_threshold,
+            "detector_conf": detector_conf,
+        },
+    }
     a_text, b_text = "Variant A not loaded.", "Variant B not loaded."
     annotated = pil_image  # default: no boxes
 
     if model_choice in ("Variant A (ResNet50 classifier)", "Both"):
         if pipes.get("a"):
-            pred = pipes["a"].predict(pil_image, metadata=metadata, currency=currency).to_dict()
+            pred = pipes["a"].predict(
+                pil_image, metadata=metadata, currency=currency,
+                threshold=classifier_threshold,
+            ).to_dict()
             full["variant_a"] = pred
             a_text = _format_prediction("A", pred)
 
     if model_choice in ("Variant B (YOLOv8 detector)", "Both"):
         if pipes.get("b"):
-            pred_b = pipes["b"].predict(pil_image, metadata=metadata, currency=currency)
+            pred_b = pipes["b"].predict(
+                pil_image, metadata=metadata, currency=currency,
+                conf=detector_conf,
+            )
             pred = pred_b.to_dict()
             full["variant_b"] = pred
-            b_text = _format_prediction("B", pred)
+            b_text = _format_prediction("B", pred, n_detections=len(pred_b.detections))
             annotated = annotate_prediction(pil_image, pred_b)
+        else:
+            b_text = (
+                "## Variant B\n"
+                "_Detector model not loaded — no boxes available. "
+                "See the server logs for the load error._"
+            )
 
     return annotated, a_text, b_text, json.dumps(full, indent=2, default=str)
 
 
-def _format_prediction(name: str, pred: dict) -> str:
+def _format_prediction(name: str, pred: dict, n_detections: Optional[int] = None) -> str:
     cost = pred.get("cost", 0.0)
     currency = pred.get("currency", "USD")
     types = ", ".join(pred.get("damage_types", [])) or "—"
     parts = ", ".join(pred.get("parts", [])) or "—"
     tier = pred.get("tier", "?")
     prov = pred.get("provenance", "")
+    detector_line = ""
+    if n_detections is not None:
+        if n_detections == 0:
+            detector_line = (
+                "**Detector:** ran, found **0 boxes** — try lowering the "
+                "*Detector confidence* slider, or this car may be undamaged "
+                "or out of the training distribution.\n\n"
+            )
+        else:
+            detector_line = f"**Detector:** {n_detections} box(es) above threshold.\n\n"
     return (
         f"## Variant {name}\n"
         f"**Cost:** {cost:.2f} {currency} _(tier: `{tier}`)_\n\n"
+        f"{detector_line}"
         f"**Damage types:** {types}\n\n"
         f"**Parts:** {parts}\n\n"
         f"_{prov}_\n"
@@ -211,6 +242,22 @@ def build_demo() -> gr.Blocks:
                         label="Which model?",
                     )
                     currency = gr.Radio(choices=["USD", "INR"], value="USD", label="Currency")
+                    with gr.Accordion("Sensitivity (raise to reduce false positives)", open=False):
+                        classifier_threshold = gr.Slider(
+                            minimum=0.1, maximum=0.95, step=0.05, value=0.6,
+                            label="Classifier threshold",
+                            info="Variant A reports a damage class only when its "
+                                 "sigmoid probability is above this. Default 0.6 "
+                                 "(was 0.5 — raised to suppress false positives "
+                                 "on undamaged / out-of-distribution images).",
+                        )
+                        detector_conf = gr.Slider(
+                            minimum=0.05, maximum=0.9, step=0.05, value=0.20,
+                            label="Detector confidence",
+                            info="Variant B (YOLOv8) keeps boxes above this "
+                                 "confidence. Lower = more boxes, more false "
+                                 "positives. Raise = fewer, stricter boxes.",
+                        )
                     with gr.Accordion("Car metadata (optional but improves cost accuracy)", open=False):
                         make = gr.Textbox(label="Make", placeholder="e.g. Toyota")
                         model_name = gr.Textbox(label="Model", placeholder="e.g. Camry")
@@ -235,7 +282,9 @@ def build_demo() -> gr.Blocks:
 
             run_btn.click(
                 _estimate,
-                inputs=[image_in, model_choice, currency, make, model_name, year, body_type],
+                inputs=[image_in, model_choice, currency,
+                        classifier_threshold, detector_conf,
+                        make, model_name, year, body_type],
                 outputs=[annotated_out, variant_a_out, variant_b_out, json_out],
             )
 
@@ -272,7 +321,24 @@ def build_demo() -> gr.Blocks:
                 "training is synthetic (catalog-derived) because no public dataset pairs "
                 "car-damage images with real repair invoices.\n\n"
                 "See `PLAN.md §3` in the GitHub repo for the full disclosure and "
-                "`progress/STATUS.md` for current production metrics."
+                "`progress/STATUS.md` for current production metrics.\n\n"
+                "## Known limitations\n\n"
+                "- **No 'undamaged' class.** The classifier was trained on **CarDD** "
+                "(Wang et al. 2023), which contains only damaged-car images. The model "
+                "has no concept of 'no damage' — every image will trigger *some* class "
+                "above the default threshold. If you photograph an undamaged car, "
+                "raise the **Classifier threshold** slider toward `0.8`.\n"
+                "- **Domain shift.** CarDD is mostly studio-like Western photos. "
+                "Real-world phone photos (varied lighting, bystanders, Indian / Asian "
+                "makes) are out-of-distribution and detector recall drops sharply. "
+                "Lower the **Detector confidence** slider to surface borderline boxes "
+                "or expect zero detections on hard photos.\n"
+                "- **No segmentation.** We predict bounding boxes, not pixel masks, "
+                "so the area estimate is always an overestimate around the actual "
+                "damaged region.\n"
+                "- **Synthetic cost target.** The cost regressor was trained on "
+                "catalog-derived prices, not real invoices. Treat the dollar amount "
+                "as an order-of-magnitude triage estimate, not a quote."
             )
 
     return demo

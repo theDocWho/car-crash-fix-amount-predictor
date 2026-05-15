@@ -101,17 +101,53 @@ def annotate_detections(
     return out
 
 
+def annotate_no_detections(
+    image: Image.Image,
+    message: str = "No damage detected by YOLOv8 detector",
+) -> Image.Image:
+    """Stamp a translucent banner across the image when the detector finds nothing.
+
+    Without this, an empty-detection image is visually indistinguishable from
+    a successful detection that drew no boxes — which is exactly the silent
+    failure mode that bit us on real-world OOD photos.
+    """
+    # Draw on an RGBA overlay then alpha-composite back so the translucent
+    # banner actually blends with the underlying image (drawing RGBA mode
+    # straight onto an RGB canvas drops the alpha channel and renders nothing).
+    base = image.convert("RGBA").copy()
+    w, h = base.size
+    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    font = _load_font(max(14, w // 40))
+    try:
+        tb = draw.textbbox((0, 0), message, font=font)
+        tw, th = tb[2] - tb[0], tb[3] - tb[1]
+    except AttributeError:
+        tw, th = font.getsize(message)
+    pad = 16
+    bx1 = max(0, (w - tw) // 2 - pad)
+    by1 = max(0, h // 2 - th // 2 - pad)
+    bx2 = min(w, (w + tw) // 2 + pad)
+    by2 = min(h, h // 2 + th // 2 + pad)
+    draw.rectangle([bx1, by1, bx2, by2], fill=(0, 0, 0, 200))
+    draw.text(((w - tw) // 2, (h - th) // 2 - pad // 2), message,
+              fill=(255, 255, 255, 255), font=font)
+    return Image.alpha_composite(base, overlay).convert("RGB")
+
+
 def annotate_prediction(image: Image.Image, prediction) -> Image.Image:
     """Convenience wrapper: pull ``.detections`` off a Variant B prediction.
 
     Works with either the :class:`PredictionB` dataclass or its ``.to_dict()``
     form — the Gradio + FastAPI layers can pass whichever they have.
+    Returns the no-detections banner image when the prediction is empty so
+    callers don't have to special-case it.
     """
     detections = getattr(prediction, "detections", None)
     if detections is None and isinstance(prediction, dict):
         detections = prediction.get("detections", [])
     if not detections:
-        return image.convert("RGB").copy()
+        return annotate_no_detections(image)
 
     # If we got dicts (from to_dict()), wrap them so attribute access works.
     if detections and isinstance(detections[0], dict):
@@ -124,4 +160,9 @@ def annotate_prediction(image: Image.Image, prediction) -> Image.Image:
     return annotate_detections(image, detections)
 
 
-__all__ = ["annotate_detections", "annotate_prediction", "DAMAGE_TYPES"]
+__all__ = [
+    "annotate_detections",
+    "annotate_no_detections",
+    "annotate_prediction",
+    "DAMAGE_TYPES",
+]

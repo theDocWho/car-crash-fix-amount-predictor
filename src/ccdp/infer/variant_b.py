@@ -110,14 +110,17 @@ class VariantBPipeline(BaseVariantPipeline):
         metadata: Optional[IdentificationResult] = None,
         currency: str = "USD",
         catalog: Optional[Catalog] = None,
+        conf: Optional[float] = None,
     ) -> PredictionB:
         """Detect damages, score them, return calibrated cost + provenance.
 
         ``image`` accepts a path-like or an already-opened ``PIL.Image``.
+        ``conf`` overrides the detector confidence threshold for this call only;
+        leave as ``None`` to use the pipeline default (set in __init__).
         """
         catalog = catalog or load_active()
 
-        detections, stats = self._detect(image, metadata)
+        detections, stats = self._detect(image, metadata, conf=conf)
         damage_types = sorted({d.damage_type for d in detections})
         parts = sorted({d.part for d in detections if d.part})
 
@@ -157,6 +160,7 @@ class VariantBPipeline(BaseVariantPipeline):
         self,
         image,
         metadata: Optional[IdentificationResult],
+        conf: Optional[float] = None,
     ) -> tuple[list[DetectedBox], dict]:
         """Run YOLOv8 and convert raw boxes into ``DetectedBox`` + per-image stats.
 
@@ -164,8 +168,9 @@ class VariantBPipeline(BaseVariantPipeline):
         just pass through whatever the caller gave us.
         """
         source = str(image) if isinstance(image, (str, Path)) else image
+        effective_conf = self.conf if conf is None else float(conf)
         result = self.detector.predict(
-            source, imgsz=self.imgsz, conf=self.conf, verbose=False,
+            source, imgsz=self.imgsz, conf=effective_conf, verbose=False,
         )[0]
         h, w = result.orig_shape
         location_hint = metadata.body_type if metadata else "unknown"
