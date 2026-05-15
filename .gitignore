@@ -37,6 +37,3 @@ runs/
 !data/parts_cost_catalog/
 !data/parts_cost_catalog/*.yaml
 .train.*
-
-# Local-only learning notebooks (not pushed to remote)
-notebooks/from_scratch/
