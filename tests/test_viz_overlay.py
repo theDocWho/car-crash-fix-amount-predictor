@@ -7,7 +7,13 @@ from dataclasses import dataclass
 import numpy as np
 from PIL import Image
 
-from ccdp.viz.overlay import _color_for, _denormalize, annotate_detections, annotate_prediction
+from ccdp.viz.overlay import (
+    _color_for,
+    _denormalize,
+    annotate_detections,
+    annotate_no_detections,
+    annotate_prediction,
+)
 
 
 @dataclass
@@ -65,6 +71,27 @@ def test_annotate_detections_empty_returns_copy():
     out = annotate_detections(img, [])
     assert out.size == img.size
     assert out is not img
+
+
+def test_annotate_no_detections_paints_banner():
+    # Use a larger canvas so the banner text fits comfortably.
+    img = _blank(w=800, h=400)
+    out = annotate_no_detections(img, message="no detections")
+    arr_in, arr_out = np.asarray(img), np.asarray(out)
+    # Banner is drawn — image is no longer all-white.
+    assert not np.array_equal(arr_in, arr_out)
+    # Some pixels are now dark (the semi-transparent banner background).
+    # Banner alpha=200 over white → channel value ~55, channel sum ~165.
+    assert (arr_out.sum(axis=-1) < 200).any()
+
+
+def test_annotate_prediction_empty_uses_banner():
+    """A prediction with zero detections must NOT silently return the
+    untouched image — it must draw the 'no detections' banner so the user
+    can distinguish 'detector ran, found nothing' from a draw failure."""
+    img = _blank(w=800, h=400)
+    out = annotate_prediction(img, {"detections": []})
+    assert not np.array_equal(np.asarray(img), np.asarray(out))
 
 
 def test_annotate_prediction_accepts_dict_form():

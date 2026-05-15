@@ -87,6 +87,10 @@ class VariantAPipeline(BaseVariantPipeline):
         ``image`` accepts a path-like (``str`` / ``Path``) or an already-opened
         ``PIL.Image`` — useful from the API where the bytes are in memory.
 
+        ``threshold`` is the sigmoid-probability cutoff above which a damage
+        class is reported. Default 0.5; raise to ~0.7 if you're seeing false
+        positives on undamaged or out-of-distribution images.
+
         Steps:
           1. Forward the image through the classifier; threshold sigmoid probs.
           2. Forward through the backbone-only path to extract 2048-d features.
@@ -96,7 +100,7 @@ class VariantAPipeline(BaseVariantPipeline):
         """
         catalog = catalog or load_active()
 
-        damage_types, probabilities, image_features = self._forward(image)
+        damage_types, probabilities, image_features = self._forward(image, threshold=threshold)
         parts = self._infer_parts(damage_types)
 
         if self._can_use_xgb(metadata):
@@ -128,10 +132,12 @@ class VariantAPipeline(BaseVariantPipeline):
 
     # -- internals --------------------------------------------------------
 
-    def _forward(self, image):
+    def _forward(self, image, threshold: float = 0.5):
         """Single forward pass; returns (damage_types, prob_dict, 2048-d features).
 
         ``image`` may be a path-like *or* an already-opened PIL.Image.
+        ``threshold`` controls which classes are surfaced in ``damage_types``;
+        the full per-class probability dict is always returned regardless.
         """
         if isinstance(image, Image.Image):
             img = image.convert("RGB")
@@ -143,7 +149,7 @@ class VariantAPipeline(BaseVariantPipeline):
             probs = torch.sigmoid(logits).cpu().numpy().flatten()
             features = extract_features(self.classifier, x).cpu().numpy().flatten()
         damage_types = [
-            DAMAGE_TYPES[i] for i, p in enumerate(probs) if p >= 0.5
+            DAMAGE_TYPES[i] for i, p in enumerate(probs) if p >= threshold
         ]
         prob_dict = {DAMAGE_TYPES[i]: float(probs[i]) for i in range(len(DAMAGE_TYPES))}
         return damage_types, prob_dict, features
