@@ -40,7 +40,7 @@ sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 WEIGHTS_DIR = Path("checkpoints/production")
 CATALOG_DIR = Path("data/parts_cost_catalog")
-RELEASE_TAG = "v0.1.0"
+RELEASE_TAG = "v0.2.0"
 GITHUB_REPO = "theDocWho/car-crash-fix-amount-predictor"
 
 # Top-level assets that go directly under WEIGHTS_DIR
@@ -72,8 +72,25 @@ def _fetch_release_assets() -> None:
     assets are placed inside a per-variant subdirectory so the registry-style
     symlinks (`xgb_a.pt` -> `xgb_a/best.pt`) point at a dir that also contains
     the matching `bundle.json` — which is what `BaseVariantPipeline` needs.
+
+    If a ``.release_tag`` sentinel exists with a different value than the
+    current ``RELEASE_TAG``, wipe the cached weights so we don't keep
+    serving stale models after a release bump on persistent-storage Spaces.
     """
     WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
+    sentinel = WEIGHTS_DIR / ".release_tag"
+    if sentinel.exists() and sentinel.read_text().strip() != RELEASE_TAG:
+        print(f"[boot] release tag changed "
+              f"({sentinel.read_text().strip()} -> {RELEASE_TAG}); refreshing cached weights")
+        for asset in TOP_LEVEL_ASSETS:
+            (WEIGHTS_DIR / asset).unlink(missing_ok=True)
+        for asset, subdir, local_name in XGB_ASSETS:
+            (WEIGHTS_DIR / subdir / local_name).unlink(missing_ok=True)
+            (WEIGHTS_DIR / subdir / "best.pt").unlink(missing_ok=True)
+        for variant in ("xgb_a", "xgb_b"):
+            link = WEIGHTS_DIR / f"{variant}.pt"
+            if link.is_symlink() or link.exists():
+                link.unlink()
     base = f"https://github.com/{GITHUB_REPO}/releases/download/{RELEASE_TAG}"
 
     # Top-level files
@@ -108,6 +125,9 @@ def _fetch_release_assets() -> None:
         if link.exists() or link.is_symlink():
             continue
         link.symlink_to(target_rel)
+
+    # Stamp the release tag so next boot can detect a release bump.
+    sentinel.write_text(RELEASE_TAG)
 
 
 def _bootstrap_catalog() -> None:
