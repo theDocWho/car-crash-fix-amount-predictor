@@ -634,6 +634,8 @@ print("\\nThe loss came down — training loop works end-to-end.")
 Uncomment the cell below to launch the **production** training script. This is what produced the weights packaged in the GitHub Release. On Colab T4 it takes **~3 hours**; on a free CPU instance it will not finish in a session.
 
 You will need to upload your Kaggle API token first — see the dataset-prep section of notebook 01.
+
+> **Tip — fix the 'always predicts some damage' bug.** The shipped v0.1.0 weights were trained on CarDD only (damaged cars), so they have no 'no damage' class and false-positive on undamaged inputs. Pass `negative_ratio=1.0` (or use `--negative-ratio 1.0` from the CLI) to mix in Stanford Cars images as the negative class. This is the `checkpoint-10` recipe.
 """),
     code('''\
 # Uncomment to run the real training. Keeps the demo notebook safe to "Run All".

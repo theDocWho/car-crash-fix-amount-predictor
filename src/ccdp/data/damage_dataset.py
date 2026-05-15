@@ -52,6 +52,38 @@ def split_records(
     return train, val, test
 
 
+def mix_negatives(
+    positives: list[Record],
+    negatives: list[Record],
+    ratio: float,
+    seed: int = 42,
+) -> list[Record]:
+    """Return ``positives`` + a deterministic subsample of ``negatives``.
+
+    ``ratio`` is ``len(returned_negatives) / len(positives)``. So:
+      * ``ratio=0`` returns positives unchanged (no-op; legacy CarDD-only flow).
+      * ``ratio=1`` adds one negative for every positive (class-balanced wrt 'any damage').
+      * ``ratio=2`` adds two negatives per positive.
+
+    If fewer negatives are available than requested we use all of them rather
+    than oversample with replacement — duplicating identical images would just
+    teach the model to memorise a few photos.
+
+    The output is shuffled deterministically so the train DataLoader doesn't
+    see all positives followed by all negatives in batch order.
+    """
+    if ratio <= 0 or not positives or not negatives:
+        return list(positives)
+    target_n = int(round(len(positives) * ratio))
+    rng = random.Random(seed)
+    pool = list(negatives)
+    rng.shuffle(pool)
+    chosen = pool[:min(target_n, len(pool))]
+    mixed = list(positives) + chosen
+    rng.shuffle(mixed)
+    return mixed
+
+
 def pos_weight(records: Iterable[Record]) -> list[float]:
     """Inverse-frequency weights for BCEWithLogitsLoss. Length == len(DAMAGE_TYPES)."""
     counts = [0] * len(DAMAGE_TYPES)
