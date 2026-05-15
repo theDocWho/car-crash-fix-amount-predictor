@@ -19,7 +19,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 
 from ccdp.data import damage_dataset as dd
-from ccdp.data.loaders import iter_cardd
+from ccdp.data.loaders import iter_cardd, iter_negatives
 from ccdp.data.schema import DAMAGE_TYPES
 from ccdp.models.damage_classifier import (
     build_damage_classifier,
@@ -43,22 +43,47 @@ class TrainConfig:
     seed: int = 42
     tag: str = "classifier"
     label_smoothing: float = 0.0
+    # Ratio of "no damage" negatives (Stanford Cars) to mix into train + val.
+    # 0.0 = legacy CarDD-only behaviour; 1.0 = balanced; 2.0 = 2x negatives.
+    # Test split stays CarDD-only so test metrics remain comparable across runs.
+    negative_ratio: float = 0.0
 
 
 def _train_tfm(cfg: "TrainConfig"):
     return train_transform(image_size=cfg.image_size, randaug_num_ops=0)
 
 
-def _load_records() -> tuple[list, list, list, list[float]]:
-    """Stream CarDD, split, and compute pos_weight from train fold."""
+def _load_records(negative_ratio: float = 0.0, seed: int = 42) -> tuple[list, list, list, list[float]]:
+    """Stream CarDD, split, optionally mix in 'no damage' negatives, return pos_weight.
+
+    Negatives are split into train/val with the same fractions as positives so
+    early-stopping on val macro-F1 also sees the new "no damage" signal. The
+    test split stays pure CarDD so previous test metrics remain comparable.
+    """
     records = [r for r in iter_cardd() if r.damage_types]
-    train, val, test = dd.split_records(records, fractions=(0.8, 0.1, 0.1), seed=42)
+    train, val, test = dd.split_records(records, fractions=(0.8, 0.1, 0.1), seed=seed)
+
+    if negative_ratio > 0:
+        negatives = list(iter_negatives())
+        if negatives:
+            neg_train, neg_val, _neg_test = dd.split_records(
+                negatives, fractions=(0.8, 0.1, 0.1), seed=seed,
+            )
+            train = dd.mix_negatives(train, neg_train, ratio=negative_ratio, seed=seed)
+            val   = dd.mix_negatives(val,   neg_val,   ratio=negative_ratio, seed=seed)
+            print(f"[data] mixed in {sum(1 for r in train if not r.damage_types)} train "
+                  f"+ {sum(1 for r in val if not r.damage_types)} val 'no damage' negatives "
+                  f"(ratio={negative_ratio})")
+        else:
+            print(f"[data] negative_ratio={negative_ratio} requested but no negatives "
+                  f"found at data/raw/stanford-cars-dataset/. Falling back to CarDD-only.")
+
     pw = dd.pos_weight(train)
     return train, val, test, pw
 
 
 def _build_loaders(cfg: TrainConfig):
-    train, val, test, pw = _load_records()
+    train, val, test, pw = _load_records(negative_ratio=cfg.negative_ratio, seed=cfg.seed)
     train_ds = dd.build_torch_dataset(train, _train_tfm(cfg))
     val_tfm = eval_transform(cfg.image_size)
     val_ds = dd.build_torch_dataset(val, val_tfm)

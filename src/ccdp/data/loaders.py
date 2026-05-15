@@ -128,6 +128,41 @@ def iter_comprehensive(root: Path = COMPREHENSIVE_ROOT) -> Iterator[Record]:
 
 
 # -------------------------------------------------------------------------
+# Stanford Cars as "no damage" negatives for the multi-label classifier
+#
+# CarDD only contains damaged cars, so a model trained on it alone has no
+# concept of "no damage" and falsely fires on undamaged inputs. Stanford
+# Cars images are by-and-large undamaged, so we re-use them as the negative
+# class for the damage classifier. Same Record schema, just with empty
+# damage_types so encode_labels() emits an all-zero target vector.
+# -------------------------------------------------------------------------
+
+
+def iter_negatives(
+    img_dir: Path = Path("data/raw/stanford-cars-dataset/cars_train/cars_train"),
+    extensions: tuple[str, ...] = (".jpg", ".jpeg", ".png"),
+) -> Iterator[Record]:
+    """Yield ``Record(damage_types=[])`` for every image under ``img_dir``.
+
+    This is intentionally agnostic to Stanford Cars' .mat metadata — we don't
+    need bbox crops or class IDs for negatives, just the raw photo. So the
+    loader is a simple recursive scan over the image directory, which makes
+    it easy to swap in any other "undamaged car" image folder later.
+    """
+    if not img_dir.exists():
+        return
+    for path in sorted(img_dir.rglob("*")):
+        if path.suffix.lower() not in extensions:
+            continue
+        yield Record(
+            image_path=path,
+            dataset="stanford_cars_negative",
+            damage_types=[],
+            bboxes=[],
+        )
+
+
+# -------------------------------------------------------------------------
 # IAAI — metadata-only (cost is paywalled in the free sample)
 # -------------------------------------------------------------------------
 

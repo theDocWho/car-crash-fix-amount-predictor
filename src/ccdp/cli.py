@@ -569,6 +569,13 @@ def train_classifier(
     tag: str = typer.Option("classifier"),
     resume: Path = typer.Option(None, help="Path to a last.pt to resume from."),
     smoke_batches: int = typer.Option(0, help="If >0, cap batches/epoch — for smoke runs."),
+    negative_ratio: float = typer.Option(
+        0.0,
+        help="Ratio of Stanford Cars 'no damage' images to mix into train+val. "
+             "0=legacy CarDD-only; 1.0=balanced; 2.0=2x negatives. Fixes the "
+             "'always predicts some damage' false-positive failure mode on "
+             "undamaged inputs.",
+    ),
 ) -> None:
     """Fine-tune ResNet50 multi-label damage-type classifier on CarDD (Variant A)."""
     from ccdp.train.train_damage_classifier import TrainConfig as ClsConfig, train as do_train
@@ -584,6 +591,7 @@ def train_classifier(
         epochs_stage1=epochs_stage1, epochs_stage2=epochs_stage2,
         batch_size=batch_size, lr_stage1=lr_stage1, lr_stage2=lr_stage2,
         num_workers=num_workers, image_size=image_size, tag=tag,
+        negative_ratio=negative_ratio,
     )
     best = do_train(cfg, resume=resume, smoke_batches=(smoke_batches or None),
                     training_catalog_id=catalog_id)
