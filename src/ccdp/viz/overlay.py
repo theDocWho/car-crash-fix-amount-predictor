@@ -135,6 +135,40 @@ def annotate_no_detections(
     return Image.alpha_composite(base, overlay).convert("RGB")
 
 
+_CAR_BOX_COLOR = (0, 200, 0)  # green — distinct from the damage palette
+
+
+def annotate_car_box(
+    image: Image.Image,
+    box: Sequence[float],
+    *,
+    label: str = "car",
+    line_width: int = 3,
+    font_size: int = 16,
+) -> Image.Image:
+    """Draw the gate's car bounding box (absolute ``xyxy`` px) on a copy of ``image``.
+
+    Used by the serving layer to show *what the gate locked onto* before the
+    identifier / damage model ran. Distinct green so it never clashes with the
+    damage-class palette.
+    """
+    out = image.convert("RGB").copy()
+    draw = ImageDraw.Draw(out, mode="RGBA")
+    font = _load_font(font_size)
+    x1, y1, x2, y2 = (int(round(v)) for v in box)
+    draw.rectangle([x1, y1, x2, y2], outline=_CAR_BOX_COLOR, width=line_width)
+    try:
+        tb = draw.textbbox((0, 0), label, font=font)
+        tw, th = tb[2] - tb[0], tb[3] - tb[1]
+    except AttributeError:
+        tw, th = font.getsize(label)
+    pad = 4
+    chip_y1 = max(0, y1 - th - 2 * pad)
+    draw.rectangle([x1, chip_y1, x1 + tw + 2 * pad, y1], fill=(*_CAR_BOX_COLOR, 220))
+    draw.text((x1 + pad, chip_y1 + pad), label, fill=(255, 255, 255), font=font)
+    return out
+
+
 def annotate_prediction(image: Image.Image, prediction) -> Image.Image:
     """Convenience wrapper: pull ``.detections`` off a Variant B prediction.
 
@@ -161,6 +195,7 @@ def annotate_prediction(image: Image.Image, prediction) -> Image.Image:
 
 
 __all__ = [
+    "annotate_car_box",
     "annotate_detections",
     "annotate_no_detections",
     "annotate_prediction",

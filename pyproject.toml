@@ -50,6 +50,11 @@ ccdp = "ccdp.cli:app"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# Ship the bundled Stanford Cars class-name map so the ML identifier can map
+# class indices → make/model on deployments that never downloaded the dataset.
+"ccdp.identification" = ["data/*.json"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"

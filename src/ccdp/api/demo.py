@@ -26,7 +26,7 @@ from ccdp.costing import fx as fxmod
 from ccdp.costing import list_catalogs
 from ccdp.identification.car_identifier import IdentificationResult, infer_segment
 from ccdp.preprocess import preprocess
-from ccdp.viz import annotate_prediction
+from ccdp.viz import annotate_car_box, annotate_no_detections, annotate_prediction
 
 
 # ---------------------------------------------------------------------------
@@ -75,26 +75,48 @@ def _build_metadata(make, model_name, year, body_type) -> Optional[Identificatio
     )
 
 
+def _format_identification(auto) -> str:
+    """Render the gate + ML-identifier verdict as Markdown for the UI."""
+    g = auto.gate
+    if not auto.has_car:
+        return "## Car check\n**No car detected** — upload a photo containing a car."
+    head = f"## Car check\n**{g.label.title()} detected** ({g.score:.0%} confidence).\n\n"
+    if auto.ml is not None:
+        ml = auto.ml
+        body = (
+            f"**Identified:** {ml.make or '—'} {ml.model or ''} "
+            f"{('(' + str(ml.year) + ')') if ml.year else ''} — {ml.confidence:.0%}\n\n"
+        )
+        if ml.topk:
+            alts = " · ".join(f"{n} {p:.0%}" for n, p in ml.topk)
+            body += f"_Top guesses: {alts}_\n\n"
+        body += f"_{auto.note}_\n"
+        return head + body
+    return head
+
+
 def _estimate(
     image: Image.Image,
     model_choice: str,
     currency: str,
     classifier_threshold: float,
     detector_conf: float,
+    identifier_confidence: float,
+    auto_detect: bool,
     make: str,
     model_name: str,
     year: Optional[int],
     body_type: str,
-) -> tuple[Image.Image, str, str, str]:
-    """Returns (annotated_image, variant_a_summary, variant_b_summary, full_json).
+) -> tuple[Image.Image, str, str, str, str]:
+    """Returns (annotated_image, id_summary, variant_a_summary, variant_b_summary, full_json).
 
-    The annotated image is the user's upload with Variant B detector boxes
-    drawn on it. If the detector finds nothing, the image is overlaid with
-    a clear 'No damage detected' banner so the user can tell that the
-    detector ran and produced an empty result (vs. failing silently).
+    When ``auto_detect`` is on and the user did not type a make, the car gate
+    (COCO Mask R-CNN) runs first: if no car is present we stop and say so;
+    otherwise the ML identifier fills make/model/year and the gate's car box is
+    drawn on the annotated image. A user-typed make always takes precedence.
     """
     if image is None:
-        return None, "Please upload an image.", "", ""
+        return None, "", "Please upload an image.", "", ""
     pipes = _get_pipelines()
     pil_image, preprocessing_meta = preprocess(image)
     metadata = _build_metadata(make, model_name, year, body_type)
@@ -106,6 +128,31 @@ def _estimate(
             "detector_conf": detector_conf,
         },
     }
+    id_text = ""
+    car_box = None
+    car_label = "car"
+
+    # Auto-detect car presence + make/model when the user gave no make.
+    if auto_detect and metadata is None:
+        try:
+            from ccdp.identification.auto_identify import auto_identify
+            auto = auto_identify(pil_image, min_confidence=identifier_confidence)
+            full["auto_identify"] = auto.to_dict()
+            id_text = _format_identification(auto)
+            if not auto.has_car:
+                banner = annotate_no_detections(
+                    pil_image, "No car detected — upload a photo containing a car."
+                )
+                return (banner, id_text,
+                        "_Skipped — no car in image._",
+                        "_Skipped — no car in image._",
+                        json.dumps(full, indent=2, default=str))
+            car_box, car_label = auto.gate.box, auto.gate.label
+            if auto.identification is not None:
+                metadata = auto.identification
+        except Exception as e:  # noqa: BLE001 — auto-detect is best-effort
+            id_text = f"_Auto-detect unavailable ({e}). Enter make/model manually._"
+
     a_text, b_text = "Variant A not loaded.", "Variant B not loaded."
     annotated = pil_image  # default: no boxes
 
@@ -135,7 +182,11 @@ def _estimate(
                 "See the server logs for the load error._"
             )
 
-    return annotated, a_text, b_text, json.dumps(full, indent=2, default=str)
+    # Draw the gate's car box on top so the user sees what was located.
+    if car_box is not None:
+        annotated = annotate_car_box(annotated, car_box, label=car_label)
+
+    return annotated, id_text, a_text, b_text, json.dumps(full, indent=2, default=str)
 
 
 def _format_prediction(name: str, pred: dict, n_detections: Optional[int] = None) -> str:
@@ -242,6 +293,13 @@ def build_demo() -> gr.Blocks:
                         label="Which model?",
                     )
                     currency = gr.Radio(choices=["USD", "INR"], value="USD", label="Currency")
+                    auto_detect = gr.Checkbox(
+                        value=True,
+                        label="Auto-detect car + make/model",
+                        info="Runs a COCO Mask R-CNN gate ('is there a car, and "
+                             "where?') then the ResNet-50 identifier. If you type "
+                             "a make below, that overrides the auto guess.",
+                    )
                     with gr.Accordion("Sensitivity (raise to reduce false positives)", open=False):
                         classifier_threshold = gr.Slider(
                             minimum=0.1, maximum=0.95, step=0.05, value=0.6,
@@ -258,6 +316,15 @@ def build_demo() -> gr.Blocks:
                                  "confidence. Lower = more boxes, more false "
                                  "positives. Raise = fewer, stricter boxes.",
                         )
+                        identifier_confidence = gr.Slider(
+                            minimum=0.0, maximum=0.95, step=0.05, value=0.30,
+                            label="Make/model confidence floor",
+                            info="Auto-detected make/model is trusted only above "
+                                 "this. The identifier knows 196 (mostly US, "
+                                 "≤2013) models, so an unseen car peaks low; below "
+                                 "the floor we report 'unknown' and price by body "
+                                 "type/segment instead of guessing. Default 0.30.",
+                        )
                     with gr.Accordion("Car metadata (optional but improves cost accuracy)", open=False):
                         make = gr.Textbox(label="Make", placeholder="e.g. Toyota")
                         model_name = gr.Textbox(label="Model", placeholder="e.g. Camry")
@@ -272,9 +339,10 @@ def build_demo() -> gr.Blocks:
                 with gr.Column(scale=1):
                     annotated_out = gr.Image(
                         type="pil",
-                        label="Detected damage (Variant B boxes)",
+                        label="Car box (green) + damage boxes",
                         interactive=False,
                     )
+                    identification_out = gr.Markdown(label="Car check")
                     variant_a_out = gr.Markdown(label="Variant A")
                     variant_b_out = gr.Markdown(label="Variant B")
             with gr.Accordion("Full JSON (provenance, probabilities, detections)", open=False):
@@ -283,9 +351,10 @@ def build_demo() -> gr.Blocks:
             run_btn.click(
                 _estimate,
                 inputs=[image_in, model_choice, currency,
-                        classifier_threshold, detector_conf,
-                        make, model_name, year, body_type],
-                outputs=[annotated_out, variant_a_out, variant_b_out, json_out],
+                        classifier_threshold, detector_conf, identifier_confidence,
+                        auto_detect, make, model_name, year, body_type],
+                outputs=[annotated_out, identification_out,
+                         variant_a_out, variant_b_out, json_out],
             )
 
         with gr.Tab("Catalog manager"):
