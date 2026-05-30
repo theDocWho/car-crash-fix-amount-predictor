@@ -245,11 +245,16 @@ def infer_segment(make: Optional[str]) -> str:
 def identify(
     image_path: str | Path,
     use_ocr: bool = False,
+    use_ml: bool = False,
+    ml_identifier: Optional[Any] = None,
 ) -> IdentificationResult:
-    """Run all non-ML stages in order and return the merged result.
+    """Run the identification stages in order and return the merged result.
 
-    OCR is opt-in because it's slow; turn on for a curated subset rather than
-    every image.
+    Stages run highest-precision first; the first to set make/model wins:
+    filename → EXIF → OCR (opt-in) → ML (opt-in). OCR and ML are opt-in because
+    they are slow / load a model; the serving layer uses
+    :func:`ccdp.identification.auto_identify.auto_identify` which gates on a car
+    being present first. ``ml_identifier`` is injectable for tests.
     """
     p = Path(image_path)
     res = IdentificationResult(image_path=p, color=estimate_color(p))
@@ -279,6 +284,25 @@ def identify(
             res.make, res.source, res.confidence = ocr["make"], "ocr", 0.8
         if "year" in ocr and res.year is None:
             res.year = ocr["year"]
+
+    # Stage 4: ML make/model classifier (opt-in; only if heuristics found nothing)
+    if use_ml and res.make is None:
+        res.stages_tried.append("ml")
+        try:
+            if ml_identifier is None:
+                from ccdp.identification.ml_identifier import MLIdentifier
+                ml_identifier = MLIdentifier()
+            ml = ml_identifier.predict(p)
+            if ml.make and ml.make != "unknown":
+                res.make, res.source, res.confidence = ml.make, "ml", ml.confidence
+                if ml.model and ml.model != "unknown":
+                    res.model = ml.model
+                if ml.year is not None:
+                    res.year = ml.year
+                if ml.body_type and ml.body_type != "unknown":
+                    res.body_type = ml.body_type
+        except (FileNotFoundError, RuntimeError, OSError):
+            pass  # no weights / unreadable image — fall through to "none"
 
     # Segment fallback if we have make but no segment yet
     if res.segment == "unknown":
