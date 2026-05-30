@@ -20,7 +20,11 @@ from pathlib import Path
 from typing import Optional, Union
 
 from ccdp.identification.car_gate import CarGate, GateResult
-from ccdp.identification.car_identifier import IdentificationResult, infer_segment
+from ccdp.identification.car_identifier import (
+    DEFAULT_MIN_CONFIDENCE,
+    IdentificationResult,
+    infer_segment,
+)
 from ccdp.identification.ml_identifier import MLIdentification, MLIdentifier
 
 ImageLike = Union[str, Path, "object"]
@@ -68,7 +72,7 @@ def auto_identify(
     identifier: Optional[MLIdentifier] = None,
     run_gate: bool = True,
     run_ml: bool = True,
-    min_confidence: float = 0.0,
+    min_confidence: float = DEFAULT_MIN_CONFIDENCE,
     image_path: Optional[Path] = None,
 ) -> AutoIdentifyResult:
     """Gate the image, then identify the car if one is present.
@@ -77,6 +81,8 @@ def auto_identify(
       upstream stage already cropped to a vehicle.
     - ``min_confidence`` drops a low-confidence ML guess back to make=None so the
       cost pipeline falls back to the catalog rather than trusting a weak label.
+      Defaults to :data:`DEFAULT_MIN_CONFIDENCE` (0.30) — out-of-distribution cars
+      (non-US, post-2013, unseen) usually peak below this on the 196-class head.
     """
     img_path = image_path or (Path(image) if isinstance(image, (str, Path)) else Path(""))
 

@@ -60,6 +60,25 @@ def test_car_present_fills_identification():
     assert res.identification.segment == "mid"      # honda → mid segment
 
 
+def test_default_min_confidence_rejects_weak_guess():
+    # With the default floor (0.30), a 0.2 guess on an out-of-distribution car is
+    # dropped to make=None so cost falls back to body/segment — no min_confidence
+    # passed, so this exercises the shipped default.
+    gate = _FakeGate(GateResult(has_car=True, box=(0, 0, 64, 64), score=0.9, label="car"))
+    res = auto_identify(Image.new("RGB", (64, 64)), gate=gate,
+                        identifier=_FakeIdentifier(_ml(conf=0.2)))
+    assert res.has_car is True
+    assert res.identification.make is None
+    assert res.identification.source == "none"
+
+
+def test_default_min_confidence_keeps_strong_guess():
+    gate = _FakeGate(GateResult(has_car=True, box=(0, 0, 64, 64), score=0.9, label="car"))
+    res = auto_identify(Image.new("RGB", (64, 64)), gate=gate,
+                        identifier=_FakeIdentifier(_ml(make="honda", conf=0.6)))
+    assert res.identification.make == "honda"   # 0.6 >= 0.30 default
+
+
 def test_low_confidence_falls_back_to_catalog():
     gate = _FakeGate(GateResult(has_car=True, box=(0, 0, 64, 64), score=0.9, label="car"))
     res = auto_identify(

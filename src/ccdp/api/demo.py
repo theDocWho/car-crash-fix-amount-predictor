@@ -101,6 +101,7 @@ def _estimate(
     currency: str,
     classifier_threshold: float,
     detector_conf: float,
+    identifier_confidence: float,
     auto_detect: bool,
     make: str,
     model_name: str,
@@ -135,7 +136,7 @@ def _estimate(
     if auto_detect and metadata is None:
         try:
             from ccdp.identification.auto_identify import auto_identify
-            auto = auto_identify(pil_image)
+            auto = auto_identify(pil_image, min_confidence=identifier_confidence)
             full["auto_identify"] = auto.to_dict()
             id_text = _format_identification(auto)
             if not auto.has_car:
@@ -315,6 +316,15 @@ def build_demo() -> gr.Blocks:
                                  "confidence. Lower = more boxes, more false "
                                  "positives. Raise = fewer, stricter boxes.",
                         )
+                        identifier_confidence = gr.Slider(
+                            minimum=0.0, maximum=0.95, step=0.05, value=0.30,
+                            label="Make/model confidence floor",
+                            info="Auto-detected make/model is trusted only above "
+                                 "this. The identifier knows 196 (mostly US, "
+                                 "≤2013) models, so an unseen car peaks low; below "
+                                 "the floor we report 'unknown' and price by body "
+                                 "type/segment instead of guessing. Default 0.30.",
+                        )
                     with gr.Accordion("Car metadata (optional but improves cost accuracy)", open=False):
                         make = gr.Textbox(label="Make", placeholder="e.g. Toyota")
                         model_name = gr.Textbox(label="Model", placeholder="e.g. Camry")
@@ -341,8 +351,8 @@ def build_demo() -> gr.Blocks:
             run_btn.click(
                 _estimate,
                 inputs=[image_in, model_choice, currency,
-                        classifier_threshold, detector_conf, auto_detect,
-                        make, model_name, year, body_type],
+                        classifier_threshold, detector_conf, identifier_confidence,
+                        auto_detect, make, model_name, year, body_type],
                 outputs=[annotated_out, identification_out,
                          variant_a_out, variant_b_out, json_out],
             )
