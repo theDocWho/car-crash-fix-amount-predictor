@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>ccdp — Neural Network Architecture &amp; Data Flow</title>
+<style>
+  :root{
+    --bg:#0c1018; --bg2:#121826; --card:#161e2e; --line:#243049;
+    --txt:#e6edf6; --mut:#93a3bd; --accent:#5cc8ff; --accent2:#7dffc0;
+    --warn:#ffd166; --red:#ff7b72; --violet:#b692ff; --green:#3fd07f;
+    --mono:"SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 700px at 70% -10%,#15203a 0%,var(--bg) 55%);
+    color:var(--txt);font:15px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  a{color:var(--accent);text-decoration:none}
+  header{padding:54px 24px 30px;max-width:1100px;margin:0 auto;text-align:center}
+  header h1{font-size:34px;margin:0 0 8px;letter-spacing:-.5px}
+  header p{color:var(--mut);max-width:760px;margin:6px auto;font-size:16px}
+  .tag{display:inline-block;background:var(--card);border:1px solid var(--line);
+    color:var(--mut);border-radius:999px;padding:4px 12px;margin:3px;font-size:12.5px;font-family:var(--mono)}
+  nav{position:sticky;top:0;z-index:20;background:rgba(12,16,24,.82);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line)}
+  nav .inner{max-width:1100px;margin:0 auto;display:flex;gap:4px;overflow-x:auto;padding:10px 14px}
+  nav a{color:var(--mut);padding:6px 12px;border-radius:8px;white-space:nowrap;font-size:13.5px}
+  nav a:hover{color:var(--txt);background:var(--card)}
+  main{max-width:1100px;margin:0 auto;padding:10px 22px 80px}
+  section{padding:42px 0 12px;border-top:1px solid var(--line)}
+  section:first-of-type{border-top:none}
+  h2{font-size:24px;margin:0 0 6px;display:flex;align-items:center;gap:10px}
+  h2 .n{font-family:var(--mono);font-size:14px;color:var(--accent);background:var(--bg2);
+    border:1px solid var(--line);border-radius:8px;padding:2px 9px}
+  h3{font-size:17px;margin:22px 0 6px;color:var(--accent2)}
+  p.lead{color:var(--mut);max-width:820px}
+  .card{background:linear-gradient(180deg,var(--card),var(--bg2));border:1px solid var(--line);
+    border-radius:14px;padding:16px;margin:16px 0}
+  canvas{width:100%;display:block;border-radius:10px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:820px){.grid2,.grid3{grid-template-columns:1fr}}
+  code,.mono{font-family:var(--mono);font-size:13px}
+  .kv{font-family:var(--mono);font-size:12.5px;color:var(--mut)}
+  .pill{display:inline-block;border-radius:6px;padding:1px 7px;font-family:var(--mono);font-size:12px;margin:2px}
+  .pill.relu{background:rgba(92,200,255,.14);color:var(--accent)}
+  .pill.sig{background:rgba(125,255,192,.14);color:var(--accent2)}
+  .pill.soft{background:rgba(182,146,255,.16);color:var(--violet)}
+  .pill.silu{background:rgba(255,209,102,.16);color:var(--warn)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:8px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--mut);font-weight:600}
+  td .mono{color:var(--accent2)}
+  .formula{background:#0a0e16;border:1px solid var(--line);border-left:3px solid var(--accent);
+    border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:13.5px;overflow-x:auto;margin:10px 0}
+  .formula b{color:var(--accent)}
+  .note{font-size:13px;color:var(--mut);border-left:2px solid var(--line);padding-left:12px;margin:10px 0}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12.5px;color:var(--mut);margin:8px 2px}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .sw{width:12px;height:12px;border-radius:3px;display:inline-block}
+  .stat{font-family:var(--mono);font-size:26px;color:var(--accent2)}
+  .muted{color:var(--mut)}
+  footer{max-width:1100px;margin:0 auto;padding:30px 22px 60px;color:var(--mut);font-size:13px;border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Car Crash Fix Amount Predictor</h1>
+  <p>How the neural networks are built, how data is parsed, trained, and turned into a repair-cost estimate.
+     Every diagram below is drawn live on <code>&lt;canvas&gt;</code> and reflects the actual <code>ccdp</code> code.</p>
+  <div style="margin-top:12px">
+    <span class="tag">ResNet-50</span><span class="tag">Mask R-CNN · ResNet-50-FPN</span>
+    <span class="tag">YOLOv8</span><span class="tag">XGBoost</span><span class="tag">PyTorch · torchvision</span>
+  </div>
+</header>
+
+<nav><div class="inner">
+  <a href="#flow">Code flow</a>
+  <a href="#data">Data parsing</a>
+  <a href="#arch">Architecture</a>
+  <a href="#act">Activations</a>
+  <a href="#train">Training</a>
+  <a href="#backprop">Backprop</a>
+  <a href="#loss">Loss functions</a>
+  <a href="#acc">Accuracy</a>
+  <a href="#out">Output</a>
+</div></nav>
+
+<main>
+
+<!-- ============ FLOW ============ -->
+<section id="flow">
+  <h2><span class="n">01</span> End-to-end code flow</h2>
+  <p class="lead">One photo flows through up to five models. A car-presence <b>gate</b> runs first; then a
+    make/model <b>identifier</b> and a <b>damage</b> model run in parallel; their signals feed an <b>XGBoost</b>
+    cost regressor that is calibrated to a swappable parts-price catalog and converted to the chosen currency.</p>
+  <div class="card"><canvas id="flowCanvas" height="430"></canvas></div>
+  <div class="legend">
+    <span><i class="sw" style="background:#5cc8ff"></i>CNN / detector</span>
+    <span><i class="sw" style="background:#b692ff"></i>classifier head</span>
+    <span><i class="sw" style="background:#7dffc0"></i>gradient-boosted trees</span>
+    <span><i class="sw" style="background:#243049;border:1px solid #3a4a6b"></i>non-ML stage</span>
+  </div>
+</section>
+
+<!-- ============ DATA ============ -->
+<section id="data">
+  <h2><span class="n">02</span> How the data is parsed</h2>
+  <p class="lead">Two datasets, two parsers, one canonical pipeline. Stanford Cars trains the identifier;
+    CarDD (COCO format) trains the damage models. Every image is decoded, cropped, augmented, tensorised and
+    normalised to ImageNet statistics before it touches a network.</p>
+  <div class="card"><canvas id="dataCanvas" height="360"></canvas></div>
+  <div class="grid2">
+    <div class="card">
+      <h3>Stanford Cars → identifier</h3>
+      <p class="kv">16,185 images · 196 classes ("Make Model BodyType Year")</p>
+      <p>Class names and per-image bounding boxes live in MATLAB <code>.mat</code> devkit files
+         (<code>cars_meta.mat</code>, <code>cars_train_annos.mat</code>). The loader reads them with
+         <code>scipy.io.loadmat</code>, crops each car to its annotation box, then applies the transform.
+         A deterministic stratified 90/10 split makes train/val.</p>
+    </div>
+    <div class="card">
+      <h3>CarDD → damage models</h3>
+      <p class="kv">~4,000 images · 6 damage types · COCO bbox + polygon masks</p>
+      <p>COCO JSON (<code>instances_*2017.json</code>) is parsed into canonical <code>Record</code>s.
+         Variant&nbsp;B uses normalised YOLO boxes; Variant&nbsp;C rasterises the polygon
+         <code>segmentation</code> into per-instance masks for Mask R-CNN.</p>
+    </div>
+  </div>
+  <div class="card">
+    <h3>The transform pipeline (training)</h3>
+    <p class="lead" style="margin-bottom:4px">Each box below is a torchvision transform actually used by the trainers.</p>
+    <canvas id="tformCanvas" height="150"></canvas>
+    <div class="legend" style="margin-top:6px">
+      <span class="mono">Resize/RandomResizedCrop → RandAugment(2,9) → MixUp/CutMix → ToTensor → Normalize(μ,σ)</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ARCH ============ -->
+<section id="arch">
+  <h2><span class="n">03</span> Network architecture</h2>
+  <p class="lead">The identifier and the Variant&nbsp;A damage classifier share the same skeleton: an ImageNet
+    <b>ResNet-50</b> backbone (<code>conv1 → layer1…layer4 → avgpool</code>) with the final fully-connected layer
+    replaced by a small custom head. The two-stage fine-tune controls which blocks receive gradients.</p>
+  <div class="card"><canvas id="archCanvas" height="360"></canvas></div>
+  <div class="grid2">
+    <div class="card">
+      <h3>Custom head — identifier (196 classes)</h3>
+      <div class="formula">Dropout(0.2) → <b>Linear(2048 → 512)</b> → ReLU → Dropout(0.3) → <b>Linear(512 → 196)</b> → Softmax</div>
+      <p class="note">The 2048-d vector after <code>avgpool</code> is also reused as a frozen feature
+        extractor for the XGBoost cost regressors.</p>
+    </div>
+    <div class="card">
+      <h3>Custom head — damage classifier (6 types)</h3>
+      <div class="formula">Dropout(0.3) → <b>Linear(2048 → 512)</b> → ReLU → Dropout(0.4) → <b>Linear(512 → 6)</b> → Sigmoid</div>
+      <p class="note">Multi-label: each of the 6 damage types fires independently, so the output is a
+        sigmoid per class, not a softmax.</p>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Variant C — Mask R-CNN (ResNet-50-FPN)</h3>
+    <p class="lead">Same backbone family, wrapped in a Feature Pyramid Network and topped with a Region Proposal
+      Network plus three heads. COCO-pretrained, then the box &amp; mask predictors are re-initialised to
+      6 damage classes + background.</p>
+    <canvas id="maskCanvas" height="240"></canvas>
+  </div>
+</section>
+
+<!-- ============ ACTIVATIONS ============ -->
+<section id="act">
+  <h2><span class="n">04</span> Activation functions</h2>
+  <p class="lead">Four non-linearities appear across the models. Hover a plot to read its value.</p>
+  <div class="grid2">
+    <div class="card"><h3><span class="pill relu">ReLU</span> hidden layers (ResNet + heads)</h3>
+      <canvas id="reluCanvas" height="190"></canvas>
+      <div class="formula">f(x) = max(0, x)</div></div>
+    <div class="card"><h3><span class="pill sig">Sigmoid</span> multi-label damage output</h3>
+      <canvas id="sigCanvas" height="190"></canvas>
+      <div class="formula">σ(x) = 1 / (1 + e<sup>−x</sup>)</div></div>
+    <div class="card"><h3><span class="pill soft">Softmax</span> make/model output (196-way)</h3>
+      <canvas id="softCanvas" height="190"></canvas>
+      <div class="formula">softmax(x)<sub>i</sub> = e<sup>x<sub>i</sub></sup> / Σ<sub>j</sub> e<sup>x<sub>j</sub></sup></div></div>
+    <div class="card"><h3><span class="pill silu">SiLU</span> YOLOv8 detector (internal)</h3>
+      <canvas id="siluCanvas" height="190"></canvas>
+      <div class="formula">silu(x) = x · σ(x)</div></div>
+  </div>
+</section>
+
+<!-- ============ TRAINING ============ -->
+<section id="train">
+  <h2><span class="n">05</span> How the model is trained</h2>
+  <p class="lead">The CNNs use a <b>two-stage transfer-learning</b> recipe; Mask R-CNN uses SGD with a step
+    schedule and mixed precision. Below: the freeze schedule, optimisers, and the augmentation that fights
+    overfitting on small datasets.</p>
+  <div class="card"><canvas id="stageCanvas" height="220"></canvas></div>
+  <div class="grid3">
+    <div class="card"><h3>Optimisers</h3>
+      <p class="kv">Identifier / classifier</p><p><b>AdamW</b>, lr 1e-3 → 1e-4, wd 1e-4, <code>ReduceLROnPlateau</code></p>
+      <p class="kv">Segmenter (Mask R-CNN)</p><p><b>SGD</b>, lr 5e-3, momentum 0.9, wd 5e-4, <code>StepLR(8, 0.1)</code></p></div>
+    <div class="card"><h3>Regularisation</h3>
+      <p>Dropout (0.2–0.4), weight decay, label smoothing 0.1, gradient clipping (‖g‖ ≤ 5.0),
+         early stopping on val metric.</p></div>
+    <div class="card"><h3>Augmentation</h3>
+      <p><b>RandAugment</b>(2 ops, mag 9), <b>MixUp</b>(α=0.2) &amp; <b>CutMix</b>(α=1.0) applied per-batch with
+         probability 0.8 — targets become soft labels.</p></div>
+  </div>
+  <div class="card">
+    <h3>MixUp / CutMix — what the network actually sees</h3>
+    <canvas id="mixCanvas" height="170"></canvas>
+    <p class="note">Two images and their labels are blended (MixUp) or one is pasted into the other (CutMix);
+      the loss is computed against the mixed soft target. This is why training uses a soft cross-entropy.</p>
+  </div>
+</section>
+
+<!-- ============ BACKPROP ============ -->
+<section id="backprop">
+  <h2><span class="n">06</span> Backpropagation logic</h2>
+  <p class="lead">PyTorch autograd records the forward graph; <code>loss.backward()</code> walks it in reverse,
+    multiplying local gradients via the chain rule. Frozen blocks (Stage 1) get no gradient; gradients are
+    clipped, optionally loss-scaled (AMP), and applied by the optimiser.</p>
+  <div class="card"><canvas id="bpCanvas" height="300"></canvas></div>
+  <div class="grid2">
+    <div class="card"><h3>The chain rule, per layer</h3>
+      <div class="formula">∂L/∂W<sub>k</sub> = ∂L/∂a<sub>out</sub> · <b>∏</b> (∂a<sub>i+1</sub>/∂a<sub>i</sub>) · ∂a<sub>k</sub>/∂W<sub>k</sub></div>
+      <p class="note">Stage 1 freezes <code>layer1…layer4</code> (requires_grad=False) so the product stops at the head.
+        Stage 2 unfreezes <code>layer3</code>+<code>layer4</code> and gradients flow deeper.</p></div>
+    <div class="card"><h3>Stabilisers in the loop</h3>
+      <table>
+        <tr><th>Step</th><th>Call</th></tr>
+        <tr><td>Zero grads</td><td class="mono">optimizer.zero_grad()</td></tr>
+        <tr><td>Backward</td><td class="mono">scaler.scale(loss).backward()</td></tr>
+        <tr><td>Clip</td><td class="mono">clip_grad_norm_(…, 5.0)</td></tr>
+        <tr><td>Step</td><td class="mono">scaler.step(optimizer)</td></tr>
+        <tr><td>AMP update</td><td class="mono">scaler.update()</td></tr>
+      </table></div>
+  </div>
+</section>
+
+<!-- ============ LOSS ============ -->
+<section id="loss">
+  <h2><span class="n">07</span> Loss / error functions</h2>
+  <p class="lead">Each task minimises a different objective. The plots show how loss grows as the prediction
+    drifts from the truth.</p>
+  <div class="grid2">
+    <div class="card"><h3>Identifier — Cross-Entropy (+ label smoothing)</h3>
+      <div class="formula">L = − <b>Σ</b><sub>c</sub> y<sub>c</sub> · log( softmax(x)<sub>c</sub> )</div>
+      <canvas id="ceCanvas" height="170"></canvas></div>
+    <div class="card"><h3>Damage classifier — Binary Cross-Entropy</h3>
+      <div class="formula">L = − <b>Σ</b><sub>c</sub> [ y<sub>c</sub> log σ(x<sub>c</sub>) + (1−y<sub>c</sub>) log(1−σ(x<sub>c</sub>)) ]</div>
+      <canvas id="bceCanvas" height="170"></canvas></div>
+  </div>
+  <div class="grid2">
+    <div class="card"><h3>Mask R-CNN — multi-task sum</h3>
+      <div class="formula">L = L<sub>rpn-cls</sub> + L<sub>rpn-box</sub> + L<sub>cls</sub> + L<sub>box</sub> + <b>L<sub>mask</sub></b></div>
+      <p class="note">Classification uses cross-entropy, box regression uses smooth-L1, and the mask head uses
+        per-pixel binary cross-entropy. The trainer sums them into one scalar.</p></div>
+    <div class="card"><h3>XGBoost cost — squared error</h3>
+      <div class="formula">L = <b>Σ</b><sub>i</sub> ( ŷ<sub>i</sub> − y<sub>i</sub> )²  &nbsp;·&nbsp; <span class="muted">objective = reg:squarederror</span></div>
+      <p class="note">The target is a synthetic, catalog-derived repair cost; the booster fits residuals stage by
+        stage with early stopping on validation RMSE.</p></div>
+  </div>
+</section>
+
+<!-- ============ ACCURACY ============ -->
+<section id="acc">
+  <h2><span class="n">08</span> How accuracy is measured</h2>
+  <p class="lead">Different heads need different metrics. These are the production numbers reported in the repo.</p>
+  <div class="card"><canvas id="metricCanvas" height="300"></canvas></div>
+  <table>
+    <tr><th>Model</th><th>Metric</th><th>Why this metric</th><th>Value</th></tr>
+    <tr><td>Make/model identifier</td><td>Top-1 accuracy</td><td>single correct class out of 196</td><td class="mono">77.0%</td></tr>
+    <tr><td>Damage classifier (A)</td><td>Macro-F1</td><td>multi-label, class-imbalanced</td><td class="mono">0.834</td></tr>
+    <tr><td>Damage detector (B)</td><td>mAP@50 / @50-95</td><td>localisation quality</td><td class="mono">0.687 / 0.540</td></tr>
+    <tr><td>Cost regressor XGBoost(A)</td><td>R² · MAPE</td><td>regression fit &amp; % error</td><td class="mono">0.642 · 32.9%</td></tr>
+    <tr><td>Cost regressor XGBoost(B)</td><td>R² · MAPE</td><td>+ bbox features</td><td class="mono">0.736 · 24.4%</td></tr>
+  </table>
+  <div class="note">Macro-F1 = mean over classes of F1 = 2·P·R/(P+R). mAP = area under precision–recall averaged
+    over IoU thresholds. R² = 1 − SS<sub>res</sub>/SS<sub>tot</sub>. MAPE = mean(|ŷ−y| / |y|).</div>
+</section>
+
+<!-- ============ OUTPUT ============ -->
+<section id="out">
+  <h2><span class="n">09</span> The final output &amp; how the image is shown</h2>
+  <p class="lead">The Gradio app returns an <b>annotated image</b> plus structured text. The original photo is
+    redrawn with a green car-box (from the gate) and coloured damage boxes/masks; a JSON blob carries full
+    provenance.</p>
+  <div class="grid2">
+    <div class="card">
+      <h3>Annotated image</h3>
+      <canvas id="outCanvas" height="300"></canvas>
+      <div class="legend" style="margin-top:6px">
+        <span><i class="sw" style="background:#00c800"></i>car box (gate)</span>
+        <span><i class="sw" style="background:#ff6347"></i>dent</span>
+        <span><i class="sw" style="background:#ffd700"></i>scratch</span>
+        <span><i class="sw" style="background:#1e90ff"></i>glass</span>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Returned payload</h3>
+      <div class="formula" style="white-space:pre">{
+  "car_check": { "label": "car", "score": 0.99 },
+  "identified": { "make": "audi", "model": "tts",
+                  "year": 2012, "confidence": 0.51 },
+  "damage_types": ["dent","scratch"],
+  "parts": ["front_bumper","hood"],
+  "cost_usd": 1284.0,
+  "cost": 107312.0, "currency": "INR",
+  "tier": "exact",
+  "provenance": "xgb_b(exact); calibrated to …"
+}</div>
+      <p class="note">If the identifier's confidence is below the 0.30 floor, <code>make</code> becomes
+        <code>null</code> and the cost falls back to body-type/segment pricing instead of a wrong label.</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  Generated explainer for <b>Car Crash Fix Amount Predictor (ccdp)</b>. Diagrams render from
+  <code>docs/network-architecture.html</code> — open it in any browser, no build step. Numbers reflect the
+  repo's reported production metrics; cost targets are synthetic (catalog-derived), so estimates are indicative,
+  not insurable quotes.
+</footer>
+
+<script>
+/* ---------- canvas helpers (crisp on retina) ---------- */
+function ctxOf(id){
+  const c=document.getElementById(id); if(!c) return null;
+  const dpr=Math.max(1,window.devicePixelRatio||1);
+  const w=c.clientWidth||c.parentElement.clientWidth, h=c.height;
+  c.width=w*dpr; c.height=h*dpr; c.style.height=h+'px';
+  const x=c.getContext('2d'); x.scale(dpr,dpr); x._w=w; x._h=h; return x;
+}
+const F='13px ui-monospace,Menlo,monospace';
+function rrect(x,X,Y,W,H,r){x.beginPath();x.moveTo(X+r,Y);x.arcTo(X+W,Y,X+W,Y+H,r);
+  x.arcTo(X+W,Y+H,X,Y+H,r);x.arcTo(X,Y+H,X,Y,r);x.arcTo(X,Y,X+W,Y,r);x.closePath();}
+function box(x,X,Y,W,H,fill,stroke,label,sub,tcol){
+  rrect(x,X,Y,W,H,9);x.fillStyle=fill;x.fill();x.lineWidth=1.5;x.strokeStyle=stroke;x.stroke();
+  x.fillStyle=tcol||'#e6edf6';x.font='600 13px system-ui';x.textAlign='center';
+  x.fillText(label,X+W/2,Y+(sub?H/2-2:H/2+4));
+  if(sub){x.fillStyle='#93a3bd';x.font='11px ui-monospace,monospace';x.fillText(sub,X+W/2,Y+H/2+14);}
+  x.textAlign='left';
+}
+function arrow(x,x1,y1,x2,y2,col){
+  x.strokeStyle=col||'#3a4a6b';x.fillStyle=col||'#3a4a6b';x.lineWidth=2;
+  x.beginPath();x.moveTo(x1,y1);x.lineTo(x2,y2);x.stroke();
+  const a=Math.atan2(y2-y1,x2-x1);
+  x.beginPath();x.moveTo(x2,y2);x.lineTo(x2-9*Math.cos(a-.4),y2-9*Math.sin(a-.4));
+  x.lineTo(x2-9*Math.cos(a+.4),y2-9*Math.sin(a+.4));x.closePath();x.fill();
+}
+
+/* ---------- 01 flow ---------- */
+(function(){const x=ctxOf('flowCanvas');if(!x)return;const W=x._w;
+  x.clearRect(0,0,W,430);
+  box(x,W/2-120,12,240,40,'#1a2336','#3a4a6b','📷  Input photo','preprocess · EXIF · resize');
+  box(x,W/2-120,72,240,42,'#10243a','#5cc8ff','Car gate','COCO Mask R-CNN → box','#cfeaff');
+  arrow(x,W/2,52,W/2,72,'#5cc8ff');
+  // branch
+  const ly=150, lh=46;
+  box(x,40,ly,250,lh,'#181f33','#b692ff','Make/model identifier','ResNet-50 → 196 softmax','#e7dcff');
+  box(x,W-290,ly,250,lh,'#10243a','#5cc8ff','Damage model','A:classifier · B:YOLO · C:Mask R-CNN','#cfeaff');
+  arrow(x,W/2-30,114,150,ly,'#b692ff');arrow(x,W/2+30,114,W-150,ly,'#5cc8ff');
+  box(x,40,ly+62,250,40,'#141a28','#2a3550','2048-d image features','shared ResNet embedding');
+  box(x,W-290,ly+62,250,40,'#141a28','#2a3550','region stats','bbox / mask area %');
+  arrow(x,165,ly+lh,165,ly+62,'#3a4a6b');arrow(x,W-165,ly+lh,W-165,ly+62,'#3a4a6b');
+  // xgb
+  const yb=300;
+  box(x,W/2-150,yb,300,46,'#10261c','#3fd07f','XGBoost cost regressor','image feats + tabular + region → cost','#cdf6e0');
+  arrow(x,165,ly+102,W/2-120,yb,'#3fd07f');arrow(x,W-165,ly+102,W/2+120,yb,'#3fd07f');
+  box(x,W/2-150,yb+62,300,40,'#1a2336','#3a4a6b','Calibrator → FX → Cost (USD / INR)','catalog-relative price');
+  arrow(x,W/2,yb+46,W/2,yb+62,'#3a4a6b');
+})();
+
+/* ---------- 02 data ---------- */
+(function(){const x=ctxOf('dataCanvas');if(!x)return;const W=x._w;x.clearRect(0,0,W,360);
+  box(x,20,16,250,40,'#181f33','#b692ff','Stanford Cars','16,185 imgs · 196 classes','#e7dcff');
+  box(x,20,70,250,34,'#141a28','#2a3550','.mat devkit','scipy.io.loadmat');
+  box(x,20,112,250,34,'#141a28','#2a3550','crop to bbox','PIL .crop(box)');
+  arrow(x,145,56,145,70);arrow(x,145,104,145,112);
+  box(x,W-270,16,250,40,'#10243a','#5cc8ff','CarDD (COCO)','~4,000 imgs · 6 damage','#cfeaff');
+  box(x,W-270,70,250,34,'#141a28','#2a3550','instances_*.json','bbox + segmentation');
+  box(x,W-270,112,250,34,'#141a28','#2a3550','polygon → mask','rasterise (PIL/coco)');
+  arrow(x,W-145,56,W-145,70);arrow(x,W-145,104,W-145,112);
+  box(x,W/2-150,180,300,42,'#10261c','#3fd07f','canonical transform pipeline','resize → augment → tensor → normalise','#cdf6e0');
+  arrow(x,145,146,W/2-120,180);arrow(x,W-145,146,W/2+120,180);
+  box(x,W/2-150,250,300,40,'#1a2336','#3a4a6b','batched tensor','[B, 3, 224, 224]');
+  arrow(x,W/2,222,W/2,250);
+})();
+
+/* ---------- 02b transforms ---------- */
+(function(){const x=ctxOf('tformCanvas');if(!x)return;const W=x._w;x.clearRect(0,0,W,150);
+  const steps=[['Resize','224×224'],['RandAugment','2 ops · m9'],['MixUp/CutMix','α .2 / 1.0'],
+    ['ToTensor','0–1 float'],['Normalize','μ,σ ImageNet']];
+  const n=steps.length, gap=14, bw=(W-(n-1)*gap-20)/n;
+  steps.forEach((s,i)=>{const X=10+i*(bw+gap);
+    box(x,X,40,bw,60,'#141a28', i%2?'#5cc8ff':'#b692ff', s[0], s[1]);
+    if(i<n-1)arrow(x,X+bw,70,X+bw+gap,70);});
+})();
+
+/* ---------- 03 architecture ---------- */
+(function(){const x=ctxOf('archCanvas');if(!x)return;const W=x._w;x.clearRect(0,0,W,360);
+  const blocks=[['conv1','7×7,64'],['layer1','×3'],['layer2','×4'],['layer3','×6'],['layer4','×3'],['avgpool','2048-d']];
+  const n=blocks.length, gap=12, bw=(W-(n-1)*gap-40)/n, Y=60, H=70;
+  // stage shading
+  x.fillStyle='rgba(92,200,255,.06)';rrect(x,20,Y-22,W-40,H+44,10);x.fill();
+  blocks.forEach((b,i)=>{const X=20+i*(bw+gap);
+    const frozen=i<3; // layer3/4 unfreeze in stage2
+    box(x,X,Y,bw,H, frozen?'#161d2b':'#10243a', frozen?'#3a4a6b':'#5cc8ff', b[0], b[1], frozen?'#9fb0cc':'#cfeaff');
+    if(i<n-1)arrow(x,X+bw,Y+H/2,X+bw+gap,Y+H/2);});
+  x.fillStyle='#93a3bd';x.font=F;
+  x.fillText('ImageNet ResNet-50 backbone — grey = frozen in Stage 1 · blue (layer3/4) unfreezes in Stage 2',24,Y-30);
+  // head
+  const hy=200;
+  box(x,W/2-260,hy,120,46,'#1c1730','#b692ff','Dropout','p=0.2/0.3','#e7dcff');
+  box(x,W/2-130,hy,120,46,'#1c1730','#b692ff','Linear','2048→512','#e7dcff');
+  box(x,W/2,hy,90,46,'#10243a','#5cc8ff','ReLU','','#cfeaff');
+  box(x,W/2+100,hy,150,46,'#1c1730','#b692ff','Linear','512→196 / 6','#e7dcff');
+  arrow(x,W/2-140,hy+23,W/2-130,hy+23);arrow(x,W/2-10,hy+23,W/2,hy+23);arrow(x,W/2+90,hy+23,W/2+100,hy+23);
+  arrow(x,W/2,Y+H,W/2-200,hy,'#b692ff');
+  x.fillStyle='#93a3bd';x.fillText('custom classification head (replaces ResNet fc)',W/2-260,hy+78);
+})();
+
+/* ---------- 03b mask rcnn ---------- */
+(function(){const x=ctxOf('maskCanvas');if(!x)return;const W=x._w;x.clearRect(0,0,W,240);
+  box(x,20,90,150,50,'#10243a','#5cc8ff','ResNet-50','backbone','#cfeaff');
+  box(x,190,90,120,50,'#10243a','#5cc8ff','FPN','pyramid','#cfeaff');
+  box(x,330,90,120,50,'#181f33','#b692ff','RPN','proposals','#e7dcff');
+  arrow(x,170,115,190,115);arrow(x,310,115,330,115);
+  const hx=W-220;
+  box(x,hx,16,200,44,'#1c1730','#b692ff','Box head','cls + smooth-L1','#e7dcff');
+  box(x,hx,86,200,44,'#1c1730','#b692ff','Class head','6 + background','#e7dcff');
+  box(x,hx,156,200,44,'#10261c','#3fd07f','Mask head','per-pixel BCE','#cdf6e0');
+  arrow(x,450,110,hx,38);arrow(x,450,115,hx,108);arrow(x,450,120,hx,178);
+})();
+
+/* ---------- 04 activations ---------- */
+function plot(id,f,dom,rng,col){const x=ctxOf(id);if(!x)return;const W=x._w,H=x._h;
+  let hov=null;const c=document.getElementById(id);
+  function draw(){x.clearRect(0,0,W,H);const pad=28;
+    const X=v=>pad+(v-dom[0])/(dom[1]-dom[0])*(W-2*pad);
+    const Y=v=>H-pad-(v-rng[0])/(rng[1]-rng[0])*(H-2*pad);
+    x.strokeStyle='#243049';x.lineWidth=1;
+    x.beginPath();x.moveTo(pad,Y(0));x.lineTo(W-pad,Y(0));x.stroke();
+    if(dom[0]<0&&dom[1]>0){x.beginPath();x.moveTo(X(0),pad);x.lineTo(X(0),H-pad);x.stroke();}
+    x.strokeStyle=col;x.lineWidth=2.5;x.beginPath();
+    for(let i=0;i<=160;i++){const v=dom[0]+i/160*(dom[1]-dom[0]);const y=f(v);
+      i?x.lineTo(X(v),Y(y)):x.moveTo(X(v),Y(y));}x.stroke();
+    if(hov!=null){const v=dom[0]+hov*(dom[1]-dom[0]);const y=f(v);
+      x.fillStyle=col;x.beginPath();x.arc(X(v),Y(y),4,0,7);x.fill();
+      x.fillStyle='#e6edf6';x.font=F;x.fillText('f('+v.toFixed(2)+') = '+y.toFixed(3),pad+4,pad+4);}
+  }
+  c.onmousemove=e=>{const r=c.getBoundingClientRect();hov=(e.clientX-r.left)/r.width;draw();};
+  c.onmouseleave=()=>{hov=null;draw();};draw();
+}
+plot('reluCanvas',v=>Math.max(0,v),[-4,4],[-.5,4],'#5cc8ff');
+plot('sigCanvas',v=>1/(1+Math.exp(-v)),[-6,6],[0,1],'#7dffc0');
+plot('siluCanvas',v=>v/(1+Math.exp(-v)),[-6,6],[-.5,6],'#ffd166');
+/* softmax as bars */
+(function(){const x=ctxOf('softCanvas');if(!x)return;const W=x._w,H=x._h;
+  const logits=[2.1,0.4,1.6,-0.8,0.9];const ex=logits.map(Math.exp);const s=ex.reduce((a,b)=>a+b);
+  const p=ex.map(v=>v/s);const n=p.length,gap=16,bw=(W-40-(n-1)*gap)/n;
+  x.clearRect(0,0,W,H);
+  p.forEach((v,i)=>{const X=20+i*(bw+gap),h=v*(H-50);
+    x.fillStyle='#b692ff';rrect(x,X,H-25-h,bw,h,5);x.fill();
+    x.fillStyle='#93a3bd';x.font=F;x.textAlign='center';
+    x.fillText((v*100).toFixed(0)+'%',X+bw/2,H-25-h-6);
+    x.fillText('c'+(i+1),X+bw/2,H-8);});x.textAlign='left';
+})();
+
+/* ---------- 05 two-stage ---------- */
+(function(){const x=ctxOf('stageCanvas');if(!x)return;const W=x._w;x.clearRect(0,0,W,220);
+  function row(y,title,froz,note){x.fillStyle='#e6edf6';x.font='600 13px system-ui';x.fillText(title,10,y-8);
+    const parts=['conv1','layer1','layer2','layer3','layer4','head'];const bw=(W-40-5*8)/6;
+    parts.forEach((p,i)=>{const X=10+i*(bw+8);const train=!froz[i];
+      box(x,X,y,bw,40, train?'#10243a':'#161d2b', train?'#5cc8ff':'#3a4a6b', p, train?'train ✓':'frozen', train?'#cfeaff':'#8a99b5');});
+    x.fillStyle='#93a3bd';x.font='12px ui-monospace,monospace';x.fillText(note,10,y+58);}
+  row(40,'Stage 1 — warm-up head',[1,1,1,1,1,0],'backbone frozen · only the new head learns · lr 1e-3');
+  row(130,'Stage 2 — fine-tune',[1,1,1,0,0,0],'unfreeze layer3 + layer4 + head · lower lr 1e-4');
+})();
+
+/* ---------- 05b mixup ---------- */
+(function(){const x=ctxOf('mixCanvas');if(!x)return;const W=x._w;x.clearRect(0,0,W,170);
+  function img(X,col,lbl){rrect(x,X,30,90,90,8);x.fillStyle=col;x.fill();
+    x.fillStyle='#0c1018';x.font='600 12px system-ui';x.textAlign='center';x.fillText(lbl,X+45,80);x.textAlign='left';}
+  img(20,'#5cc8ff','car A');img(20+120,'#b692ff','car B');
+  x.fillStyle='#93a3bd';x.font='22px system-ui';x.fillText('+',135,82);
+  arrow(x,235,75,300,75);
+  // mixup blend
+  rrect(x,310,30,90,90,8);x.fillStyle='#7d9fde';x.fill();x.fillStyle='#0c1018';x.font='600 11px system-ui';
+  x.textAlign='center';x.fillText('MixUp',355,72);x.fillText('0.7·A+0.3·B',355,88);x.textAlign='left';
+  // cutmix
+  rrect(x,420,30,90,90,8);x.fillStyle='#5cc8ff';x.fill();x.fillStyle='#b692ff';rrect(x,455,55,45,45,4);x.fill();
+  x.fillStyle='#0c1018';x.font='600 11px system-ui';x.textAlign='center';x.fillText('CutMix',465,128);x.textAlign='left';
+  x.fillStyle='#93a3bd';x.font=F;
+  x.fillText('soft target y = 0.7·y_A + 0.3·y_B   →   soft cross-entropy loss',310,150);
+})();
+
+/* ---------- 06 backprop ---------- */
+(function(){const x=ctxOf('bpCanvas');if(!x)return;const W=x._w;x.clearRect(0,0,W,300);
+  const L=['input','conv','layer3/4','head','loss'];const n=L.length,gap=(W-40-5*90)/4,bw=90,Y=70;
+  L.forEach((l,i)=>{const X=20+i*(bw+gap);box(x,X,Y,bw,50,'#141a28','#2a3550',l,'');
+    if(i<n-1)arrow(x,X+bw,Y+20,X+bw+gap,Y+20,'#5cc8ff');});
+  x.fillStyle='#5cc8ff';x.font='600 13px system-ui';x.fillText('forward  →  activations',20,Y-14);
+  // backward
+  const Yb=180;
+  L.forEach((l,i)=>{const X=20+i*(bw+gap);
+    if(i>0)arrow(x,20+i*(bw+gap),Yb+20, 20+(i-1)*(bw+gap)+bw, Yb+20,'#ff7b72');});
+  x.fillStyle='#ff7b72';x.font='600 13px system-ui';x.fillText('backward  ←  ∂L/∂W via chain rule',20,Yb-14);
+  L.forEach((l,i)=>{const X=20+i*(bw+gap);const froz=i<2;
+    box(x,X,Yb,bw,50, froz?'#161d2b':'#2a1620', froz?'#3a4a6b':'#ff7b72', froz?'no grad':'∂L/∂W', froz?'frozen':'update', froz?'#8a99b5':'#ffd0cc');});
+  x.fillStyle='#93a3bd';x.font=F;x.fillText('frozen blocks receive no gradient (Stage 1) — grad clipped to ‖g‖≤5, AMP-scaled, then optimiser.step()',20,Yb+78);
+})();
+
+/* ---------- 07 loss plots ---------- */
+function lossPlot(id,f,col,lbl){const x=ctxOf(id);if(!x)return;const W=x._w,H=x._h,pad=30;
+  x.clearRect(0,0,W,H);
+  const X=v=>pad+v*(W-2*pad);const Y=v=>H-pad-Math.min(v,5)/5*(H-2*pad);
+  x.strokeStyle='#243049';x.beginPath();x.moveTo(pad,H-pad);x.lineTo(W-pad,H-pad);x.lineTo(pad,H-pad);x.lineTo(pad,pad);x.stroke();
+  x.strokeStyle=col;x.lineWidth=2.5;x.beginPath();
+  for(let i=0;i<=120;i++){const p=0.001+i/120*0.997;const y=f(p);i?x.lineTo(X(p),Y(y)):x.moveTo(X(p),Y(y));}x.stroke();
+  x.fillStyle='#93a3bd';x.font=F;x.fillText(lbl,pad+4,pad+12);x.fillText('pred prob for true class →',pad+4,H-10);}
+lossPlot('ceCanvas',p=>-Math.log(p),'#b692ff','−log(p): loss explodes as p→0');
+lossPlot('bceCanvas',p=>-Math.log(p),'#7dffc0','per-class log loss (y=1 shown)');
+
+/* ---------- 08 metrics ---------- */
+(function(){const x=ctxOf('metricCanvas');if(!x)return;const W=x._w,H=x._h;x.clearRect(0,0,W,H);
+  const d=[['Identifier top-1',0.77,'#b692ff'],['Classifier macroF1',0.834,'#7dffc0'],
+    ['Detector mAP@50',0.687,'#5cc8ff'],['XGBoost(A) R²',0.642,'#ffd166'],['XGBoost(B) R²',0.736,'#3fd07f']];
+  const n=d.length,gap=24,bw=(W-60-(n-1)*gap)/n,base=H-40;
+  d.forEach((m,i)=>{const X=30+i*(bw+gap),h=m[1]*(H-80);
+    x.fillStyle=m[2];rrect(x,X,base-h,bw,h,6);x.fill();
+    x.fillStyle='#e6edf6';x.font='600 14px ui-monospace,monospace';x.textAlign='center';
+    x.fillText(m[1].toFixed(3),X+bw/2,base-h-8);
+    x.fillStyle='#93a3bd';x.font='11.5px system-ui';
+    m[0].split(' ').forEach((w,k)=>x.fillText(w,X+bw/2,base+16+k*13));});x.textAlign='left';
+})();
+
+/* ---------- 09 output mockup ---------- */
+(function(){const x=ctxOf('outCanvas');if(!x)return;const W=x._w,H=x._h;x.clearRect(0,0,W,H);
+  // fake car photo
+  rrect(x,10,10,W-20,H-20,10);x.fillStyle='#1b2740';x.fill();
+  x.fillStyle='#2a3a5c';rrect(x,W*0.18,H*0.45,W*0.64,H*0.32,16);x.fill(); // body
+  x.fillStyle='#22304e';rrect(x,W*0.30,H*0.30,W*0.40,H*0.22,10);x.fill(); // cabin
+  x.fillStyle='#0c1018';x.beginPath();x.arc(W*0.30,H*0.78,18,0,7);x.fill();
+  x.beginPath();x.arc(W*0.70,H*0.78,18,0,7);x.fill();
+  // car box (gate, green)
+  x.strokeStyle='#00c800';x.lineWidth=3;x.strokeRect(W*0.15,H*0.26,W*0.70,H*0.56);
+  x.fillStyle='#00c800';x.fillRect(W*0.15,H*0.26-18,52,18);x.fillStyle='#04210b';x.font='600 11px system-ui';x.fillText('car 99%',W*0.15+5,H*0.26-5);
+  // damage boxes
+  function dmg(X,Y,Wd,Hd,col,lbl){x.strokeStyle=col;x.lineWidth=2.5;x.strokeRect(X,Y,Wd,Hd);
+    x.fillStyle=col;x.fillRect(X,Y-16,x.measureText(lbl).width+10,16);x.fillStyle='#0c1018';x.font='600 11px system-ui';x.fillText(lbl,X+5,Y-4);}
+  dmg(W*0.20,H*0.58,W*0.16,H*0.12,'#ff6347','dent 88%');
+  dmg(W*0.55,H*0.40,W*0.14,H*0.10,'#ffd700','scratch 74%');
+  dmg(W*0.40,H*0.32,W*0.12,H*0.08,'#1e90ff','glass 81%');
+})();
+</script>
+</body>
+</html>
