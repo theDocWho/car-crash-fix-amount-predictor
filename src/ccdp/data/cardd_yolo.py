@@ -75,6 +75,7 @@ def _materialize_split(records: Iterable[Record], split_root: Path) -> int:
 
 def write_data_yaml(root: Path) -> Path:
     """Write the Ultralytics-style data.yaml referencing this layout."""
+    root.mkdir(parents=True, exist_ok=True)   # ensure root exists even if a split was empty
     p = root / "data.yaml"
     # Ultralytics resolves these relative to data.yaml's parent.
     body = []
@@ -178,6 +179,16 @@ def build_seg(root: Path = DEFAULT_SEG_ROOT) -> Path:
     n_train = _materialize_seg_split(train, seg_map, root / "train")
     n_val = _materialize_seg_split(val, seg_map, root / "val")
     n_test = _materialize_seg_split(test, seg_map, root / "test")
+    if n_train + n_val + n_test == 0:
+        raise FileNotFoundError(
+            "build_seg() produced 0 labels — CarDD was not found.\n"
+            f"  CarDD root : {CARDD_ROOT}  (exists: {Path(CARDD_ROOT).exists()})\n"
+            f"  records from iter_cardd(): {len(records)}\n"
+            f"  images with polygons     : {len(seg_map)}\n"
+            "Fix: download CarDD first — `bash scripts/download_datasets.sh` "
+            "(needs ~/.kaggle/kaggle.json). The path above must contain "
+            "annotations/instances_*2017.json and the train2017/ val2017/ test2017/ image folders."
+        )
     data_yaml = write_data_yaml(root)
     print(f"[yolo-seg] root={root}  train={n_train}  val={n_val}  test={n_test}")
     print(f"[yolo-seg] data.yaml -> {data_yaml}")
