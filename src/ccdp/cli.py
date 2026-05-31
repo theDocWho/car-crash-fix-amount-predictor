@@ -471,36 +471,71 @@ def train_extract_features(
 
 @train_app.command("detector")
 def train_detector(
-    model: str = typer.Option("yolov8n.pt", help="yolov8n.pt | yolov8s.pt | ..."),
+    model: str = typer.Option(None, help="Default yolov8n.pt (or yolov8n-seg.pt with --seg)."),
     epochs: int = typer.Option(50),
     imgsz: int = typer.Option(640),
     batch: int = typer.Option(16),
     patience: int = typer.Option(15),
     workers: int = typer.Option(4),
-    tag: str = typer.Option("yolov8n"),
-    device: str = typer.Option(None, help="Override device (mps|cpu|0)."),
+    tag: str = typer.Option(None, help="Defaults to yolov8n / yolov8n-seg."),
+    device: str = typer.Option(None, help="Override device (cuda|mps|cpu|0)."),
+    seg: bool = typer.Option(False, "--seg", help="Train YOLOv8-seg (pixel masks) on CarDD polygons."),
 ) -> None:
-    """Train YOLOv8 on CarDD (Variant B detector). Materializes the YOLO dataset if missing."""
+    """Train YOLOv8 on CarDD. ``--seg`` trains the segmentation model (Variant B+ masks)."""
     from ccdp.train.train_yolov8 import YoloConfig, train as do_train
     from ccdp.costing import load_active
     try:
-        active = load_active()
-        catalog_id = active.catalog_id
+        catalog_id = load_active().catalog_id
     except FileNotFoundError:
         catalog_id = None
-    cfg = YoloConfig(model=model, epochs=epochs, imgsz=imgsz, batch=batch,
-                     patience=patience, workers=workers, tag=tag, device=device)
+    model = model or ("yolov8n-seg.pt" if seg else "yolov8n.pt")
+    cfg = YoloConfig(
+        model=model, epochs=epochs, imgsz=imgsz, batch=batch, patience=patience,
+        workers=workers, device=device, seg=seg,
+        tag=(tag or ("yolov8n-seg" if seg else "yolov8n")),
+        variant=("yoloseg" if seg else "detector"),
+        notes=("CarDD YOLOv8-seg damage segmenter (true mask area %)" if seg
+               else "CarDD YOLOv8 damage-type detector (Variant B)"),
+    )
     best = do_train(cfg, training_catalog_id=catalog_id)
+    console.print(f"[green]Best:[/green] {best}")
+
+
+@train_app.command("parts")
+def train_parts(
+    model: str = typer.Option("yolov8n-seg.pt", help="A YOLOv8-seg model."),
+    data: str = typer.Option("carparts-seg.yaml", help="Ultralytics dataset (auto-downloads)."),
+    epochs: int = typer.Option(60),
+    imgsz: int = typer.Option(640),
+    batch: int = typer.Option(16),
+    workers: int = typer.Option(4),
+    tag: str = typer.Option("yolov8n-parts"),
+    device: str = typer.Option(None, help="Override device (cuda|mps|cpu|0)."),
+) -> None:
+    """Train a car-PARTS segmenter (YOLOv8-seg on Ultralytics carparts-seg).
+
+    Replaces the heuristic ``infer_part_from_damage`` with a learned part map, so
+    a detected damage can be assigned to a real part for parts-keyed costing.
+    """
+    from pathlib import Path as _P
+    from ccdp.train.train_yolov8 import YoloConfig, train as do_train
+    cfg = YoloConfig(
+        model=model, epochs=epochs, imgsz=imgsz, batch=batch, workers=workers,
+        device=device, seg=True, tag=tag, variant="parts",
+        notes="Car-parts instance segmenter (YOLOv8-seg, Ultralytics carparts-seg)",
+    )
+    best = do_train(cfg, data_yaml=_P(data))
     console.print(f"[green]Best:[/green] {best}")
 
 
 @train_app.command("build-yolo-dataset")
 def train_build_yolo_dataset(
     root: Path = typer.Option(Path("data/processed/yolo")),
+    seg: bool = typer.Option(False, "--seg", help="Build the YOLOv8-seg (polygon) dataset instead."),
 ) -> None:
-    """Materialize CarDD as Ultralytics YOLO dataset (train/val/test with labels)."""
+    """Materialize CarDD as an Ultralytics YOLO dataset (boxes, or --seg for masks)."""
     from ccdp.data import cardd_yolo
-    p = cardd_yolo.build(root)
+    p = cardd_yolo.build_seg(root if root != Path("data/processed/yolo") else cardd_yolo.DEFAULT_SEG_ROOT) if seg else cardd_yolo.build(root)
     console.print(f"[green]Wrote[/green] {p}")
 
 

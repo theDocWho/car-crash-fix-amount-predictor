@@ -11,7 +11,6 @@ Thin wrapper around Ultralytics that:
 from __future__ import annotations
 
 import json
-import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
@@ -32,6 +31,9 @@ class YoloConfig:
     optimizer: str = "AdamW"
     lr0: float = 1e-3
     device: Optional[str] = None        # None -> ultralytics auto (mps if available)
+    seg: bool = False                   # True -> CarDD YOLOv8-seg (polygon masks)
+    variant: str = "detector"           # registry variant: detector | yoloseg | parts
+    notes: str = "CarDD YOLOv8 damage-type detector (Variant B)"
 
 
 def _pick_device(explicit: Optional[str]) -> str:
@@ -45,6 +47,25 @@ def _pick_device(explicit: Optional[str]) -> str:
     return "cpu"
 
 
+def _resolve_data(cfg: YoloConfig, data_yaml):
+    """Return the Ultralytics ``data=`` argument.
+
+    - ``None``  -> build/locate the CarDD dataset (seg or detect per ``cfg.seg``).
+    - a local file path -> absolute path string.
+    - a bare name (e.g. ``"carparts-seg.yaml"``) -> passed through so Ultralytics
+      resolves it from its dataset registry and auto-downloads.
+    """
+    if data_yaml is None:
+        if cfg.seg:
+            return str(cardd_yolo.build_seg().resolve())
+        p = cardd_yolo.DEFAULT_ROOT / "data.yaml"
+        if not p.exists():
+            p = cardd_yolo.build()
+        return str(Path(p).resolve())
+    p = Path(data_yaml)
+    return str(p.resolve()) if p.exists() else str(data_yaml)
+
+
 def train(
     cfg: YoloConfig,
     data_yaml: Optional[Path] = None,
@@ -53,26 +74,23 @@ def train(
 ) -> Path:
     from ultralytics import YOLO
 
-    if data_yaml is None:
-        data_yaml = cardd_yolo.DEFAULT_ROOT / "data.yaml"
-        if not data_yaml.exists():
-            data_yaml = cardd_yolo.build()
+    data_arg = _resolve_data(cfg, data_yaml)
 
     run_dir = create_run(
-        variant="detector", tag=cfg.tag,
+        variant=cfg.variant, tag=cfg.tag,
         training_catalog_id=training_catalog_id,
-        notes="CarDD YOLOv8 damage-type detector (Variant B)",
+        notes=cfg.notes,
     )
     (run_dir / "config.yaml").write_text("\n".join(f"{k}: {v}" for k, v in asdict(cfg).items()))
 
     device = _pick_device(cfg.device)
-    print(f"[yolo] data={data_yaml}  device={device}  model={cfg.model}  epochs={cfg.epochs}")
+    print(f"[yolo] data={data_arg}  device={device}  model={cfg.model}  epochs={cfg.epochs}")
 
     model = YOLO(cfg.model)
     # Run training. Ultralytics writes into `runs/detect/train*`. We point its
     # `project=` at our run_dir so the artifacts land in our registry layout.
     results = model.train(
-        data=str(data_yaml.resolve()),
+        data=data_arg,
         epochs=cfg.epochs,
         imgsz=cfg.imgsz,
         batch=cfg.batch,
