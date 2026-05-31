@@ -34,19 +34,44 @@ SLUGS=(
 
 log() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" | tee -a "$LOG"; }
 
+# "Extracted" = the dir holds something other than a leftover *.zip or _* log file.
+# (Kaggle's --unzip occasionally leaves the archive un-extracted — e.g. if it was
+# interrupted — and the old presence check would then skip it forever.)
+has_extracted() {
+  [[ -d "$1" ]] && [[ -n "$(ls -A "$1" 2>/dev/null | grep -vE '^_|\.zip$' || true)" ]]
+}
+
+# Extract any leftover *.zip in $dir, then delete the archive on success.
+extract_leftover_zips() {
+  local dir="$1" z
+  shopt -s nullglob
+  for z in "$dir"/*.zip; do
+    log "unzip  $(basename "$z")  (extracting manually)"
+    if command -v unzip >/dev/null 2>&1 && unzip -q -o "$z" -d "$dir" >>"$LOG" 2>&1; then
+      rm -f "$z"
+    else
+      log "FAIL   unzip $(basename "$z") -- see $LOG (is 'unzip' installed?)"
+    fi
+  done
+  shopt -u nullglob
+}
+
 for slug in "${SLUGS[@]}"; do
   name="${slug##*/}"
   dir="$DEST/$name"
-  if [[ -d "$dir" && -n "$(ls -A "$dir" 2>/dev/null | grep -v '^_' || true)" ]]; then
-    log "skip   $slug  (already present at $dir)"
+  if has_extracted "$dir"; then
+    log "skip   $slug  (already extracted at $dir)"
     continue
   fi
   mkdir -p "$dir"
   log "fetch  $slug  ->  $dir"
-  if kaggle datasets download -d "$slug" -p "$dir" --unzip >>"$LOG" 2>&1; then
+  kaggle datasets download -d "$slug" -p "$dir" --unzip >>"$LOG" 2>&1 || log "warn   kaggle download returned non-zero for $slug"
+  # Safety net: if --unzip left the archive behind, extract it ourselves.
+  extract_leftover_zips "$dir"
+  if has_extracted "$dir"; then
     log "ok     $slug  ($(du -sh "$dir" | cut -f1))"
   else
-    log "FAIL   $slug  -- see $LOG"
+    log "FAIL   $slug  -- nothing extracted; see $LOG"
   fi
 done
 
