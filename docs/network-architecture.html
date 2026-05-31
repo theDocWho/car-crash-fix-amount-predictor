@@ -148,13 +148,15 @@
           <td class="mono">196 (make·model·year)</td><td>bbox + class (.mat devkit)</td><td>research / academic</td></tr>
       <tr><td><b>CarDD</b><br><span class="kv">Wang et&nbsp;al. 2023</span></td>
           <td>Damage classifier (A) + detector (B)</td><td class="mono">~4,000 imgs</td>
-          <td class="mono">6 damage types</td><td>COCO bbox + polygon masks</td><td>academic (verify)</td></tr>
-      <tr><td><b>COCO</b><br><span class="kv">via torchvision weights</span></td>
-          <td>Car-presence gate (pretrained)</td><td class="mono">— (weights only)</td>
-          <td class="mono">80 (uses car/truck/bus)</td><td>pretrained Mask R-CNN</td><td>CC BY 4.0 (images)</td></tr>
+          <td class="mono">6 damage types</td><td>COCO-format bbox + masks</td><td>academic (verify)</td></tr>
     </table>
-    <p class="note">CarDD's 6 damage types: <code>dent · scratch · crack · glass_shatter · lamp_broken · tire_flat</code>.
-      Full attributions in the <a href="#cite">Citations</a> section.</p>
+    <p class="note"><b>These two are the only datasets trained on.</b> CarDD's 6 damage types:
+      <code>dent · scratch · crack · glass_shatter · lamp_broken · tire_flat</code>. (CarDD ships its labels in
+      <i>COCO format</i> — that's the file format, not the COCO dataset.) Full attributions in
+      the <a href="#cite">Citations</a> section.</p>
+    <p class="note"><b>Pretrained weights — not a training set:</b> the car gate uses torchvision's
+      <b>COCO-pretrained Mask R-CNN</b> (weights only), run at inference to find <code>car/truck/bus</code>.
+      Nothing in this project downloads or trains on the COCO dataset.</p>
   </div>
 
   <div class="grid2">
