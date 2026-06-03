@@ -53,10 +53,29 @@ class VariantDPipeline:
         parts_model: Optional[SegModel] = None,
     ):
         self.min_overlap = min_overlap
-        self.damage = damage_model or SegModel(
-            damage_ckpt or production_target("yoloseg"), conf=conf)
-        self.parts = parts_model or SegModel(
-            parts_ckpt or production_target("parts"), conf=conf)
+
+        # Resolve + validate weights up front so a missing-weights Space fails
+        # HERE (caught by the demo's try/except → "Variant D unavailable") rather
+        # than later inside predict() as an uncaught FileNotFoundError. SegModel
+        # is lazy, so without this check construction would deceptively succeed.
+        if damage_model is None:
+            dmg = damage_ckpt or production_target("yoloseg")
+            if dmg is None or not Path(dmg).exists():
+                raise FileNotFoundError(
+                    "Variant D needs the YOLOv8-seg damage weights. Train + promote "
+                    "(`ccdp train detector --seg`) or add `yoloseg.pt` to the release."
+                )
+            damage_model = SegModel(dmg, conf=conf)
+        if parts_model is None:
+            prt = parts_ckpt or production_target("parts")
+            if prt is None or not Path(prt).exists():
+                raise FileNotFoundError(
+                    "Variant D needs the car-parts seg weights. Train + promote "
+                    "(`ccdp train parts`) or add `parts.pt` to the release."
+                )
+            parts_model = SegModel(prt, conf=conf)
+        self.damage = damage_model
+        self.parts = parts_model
 
     def predict(
         self,
