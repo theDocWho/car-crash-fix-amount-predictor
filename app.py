@@ -26,7 +26,6 @@ XGBoost bundles correctly:
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -59,10 +58,24 @@ XGB_ASSETS = [
     ("bundle_b.json", "xgb_b", "bundle.json"),
 ]
 
+# Variant D (parts-aware YOLOv8-seg) weights are OPTIONAL: fetched best-effort so
+# the Space keeps booting on releases that predate them. Upload these to the
+# release tag above to light Variant D up — no code change or tag bump needed.
+OPTIONAL_TOP_LEVEL = ["yoloseg.pt", "parts.pt"]
+
 
 def _curl(url: str, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(["curl", "-fL", "--retry", "3", "-o", str(dst), url], check=True)
+
+
+def _curl_optional(url: str, dst: Path) -> bool:
+    """Best-effort fetch — returns False (and leaves nothing) if the asset is absent."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if subprocess.run(["curl", "-fL", "--retry", "2", "-o", str(dst), url]).returncode != 0:
+        dst.unlink(missing_ok=True)
+        return False
+    return True
 
 
 def _fetch_release_assets() -> None:
@@ -125,6 +138,12 @@ def _fetch_release_assets() -> None:
         if link.exists() or link.is_symlink():
             continue
         link.symlink_to(target_rel)
+
+    # Best-effort: Variant D parts-aware seg weights (absent on older releases).
+    for asset in OPTIONAL_TOP_LEVEL:
+        dst = WEIGHTS_DIR / asset
+        if not dst.exists() and _curl_optional(f"{base}/{asset}", dst):
+            print(f"[boot] fetched optional {asset}")
 
     # Stamp the release tag so next boot can detect a release bump.
     sentinel.write_text(RELEASE_TAG)

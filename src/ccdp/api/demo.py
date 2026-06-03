@@ -52,6 +52,12 @@ def _get_pipelines() -> dict:
         except Exception as e:  # noqa: BLE001
             print(f"[demo] Variant B unavailable: {e}")
             _pipelines["b"] = None
+        try:
+            from ccdp.infer.variant_d import VariantDPipeline
+            _pipelines["d"] = VariantDPipeline()
+        except Exception as e:  # noqa: BLE001
+            print(f"[demo] Variant D unavailable: {e}")
+            _pipelines["d"] = None
     return _pipelines
 
 
@@ -154,6 +160,7 @@ def _estimate(
             id_text = f"_Auto-detect unavailable ({e}). Enter make/model manually._"
 
     a_text, b_text = "Variant A not loaded.", "Variant B not loaded."
+    d_text = "Variant D not run."
     annotated = pil_image  # default: no boxes
 
     if model_choice in ("Variant A (ResNet50 classifier)", "Both"):
@@ -182,11 +189,38 @@ def _estimate(
                 "See the server logs for the load error._"
             )
 
+    if model_choice == "Variant D (parts-aware seg)":
+        if pipes.get("d"):
+            pred_d = pipes["d"].predict(pil_image, metadata=metadata, currency=currency)
+            full["variant_d"] = pred_d.to_dict()
+            d_text = _format_variant_d(pred_d)
+            annotated = annotate_prediction(pil_image, pred_d)
+        else:
+            d_text = (
+                "## Variant D\n_Parts-aware models not loaded — add `yoloseg.pt` + "
+                "`parts.pt` to `checkpoints/production/` (or the release)._"
+            )
+
     # Draw the gate's car box on top so the user sees what was located.
     if car_box is not None:
         annotated = annotate_car_box(annotated, car_box, label=car_label)
 
-    return annotated, id_text, a_text, b_text, json.dumps(full, indent=2, default=str)
+    return annotated, id_text, a_text, b_text, d_text, json.dumps(full, indent=2, default=str)
+
+
+def _format_variant_d(pred) -> str:
+    cost = f"{pred.cost:.2f} {pred.currency}"
+    rows = "\n".join(
+        f"- **{a['damage_type']}** → {a['part'] or '—'} "
+        f"({a['severity']}, {a['source']})"
+        for a in pred.assignments
+    ) or "_no damage detected_"
+    warn = f"\n\n⚠️ _{pred.warning}_" if pred.warning else ""
+    return (
+        f"## Variant D — parts-aware\n"
+        f"**Cost:** {cost} _(tier: `{pred.tier}`)_\n\n"
+        f"**Damage → part:**\n{rows}{warn}"
+    )
 
 
 def _format_prediction(name: str, pred: dict, n_detections: Optional[int] = None) -> str:
@@ -288,6 +322,7 @@ def build_demo() -> gr.Blocks:
                     model_choice = gr.Radio(
                         choices=["Variant A (ResNet50 classifier)",
                                  "Variant B (YOLOv8 detector)",
+                                 "Variant D (parts-aware seg)",
                                  "Both"],
                         value="Both",
                         label="Which model?",
@@ -345,6 +380,7 @@ def build_demo() -> gr.Blocks:
                     identification_out = gr.Markdown(label="Car check")
                     variant_a_out = gr.Markdown(label="Variant A")
                     variant_b_out = gr.Markdown(label="Variant B")
+                    variant_d_out = gr.Markdown(label="Variant D")
             with gr.Accordion("Full JSON (provenance, probabilities, detections)", open=False):
                 json_out = gr.Code(language="json")
 
@@ -354,7 +390,7 @@ def build_demo() -> gr.Blocks:
                         classifier_threshold, detector_conf, identifier_confidence,
                         auto_detect, make, model_name, year, body_type],
                 outputs=[annotated_out, identification_out,
-                         variant_a_out, variant_b_out, json_out],
+                         variant_a_out, variant_b_out, variant_d_out, json_out],
             )
 
         with gr.Tab("Catalog manager"):
