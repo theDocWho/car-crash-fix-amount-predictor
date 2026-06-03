@@ -25,6 +25,7 @@ from ccdp.registry import create_run, update_metrics
 FEATURES_DEFAULT = Path("data/processed/cardd_features.parquet")
 TARGETS_DEFAULT = Path("data/processed/cardd_cost_targets.parquet")
 BBOX_FEATURES_DEFAULT = Path("data/processed/cardd_bbox_features.parquet")
+SEG_FEATURES_DEFAULT = Path("data/processed/cardd_seg_features.parquet")
 
 
 @dataclass
@@ -59,6 +60,7 @@ def train(
     features_path: Path = FEATURES_DEFAULT,
     targets_path: Path = TARGETS_DEFAULT,
     bbox_features_path: Optional[Path] = None,
+    seg_features_path: Optional[Path] = None,
 ) -> Path:
     import pandas as pd
     import xgboost as xgb
@@ -69,26 +71,33 @@ def train(
     if df.empty:
         raise RuntimeError("merge produced empty df — features and targets out of sync")
 
-    bbox_feat_cols: list[str] = []
-    if cfg.variant == "b":
-        if bbox_features_path is None:
-            bbox_features_path = BBOX_FEATURES_DEFAULT
-        if not Path(bbox_features_path).exists():
+    # Variant B joins bbox-derived region features; Variant C joins the same
+    # schema computed from YOLOv8-seg masks (true damaged-area fraction).
+    region_feat_cols: list[str] = []
+    _REGION = {
+        "b": ("bbox", bbox_features_path, BBOX_FEATURES_DEFAULT,
+              "ccdp train extract-bbox-features [--gt]"),
+        "c": ("seg", seg_features_path, SEG_FEATURES_DEFAULT,
+              "ccdp train extract-seg-features [--gt]"),
+    }
+    if cfg.variant in _REGION:
+        kind, path, default, how = _REGION[cfg.variant]
+        path = path or default
+        if not Path(path).exists():
             raise FileNotFoundError(
-                f"Variant B needs bbox features at {bbox_features_path}. "
-                f"Run `ccdp train extract-bbox-features [--gt]` first."
+                f"Variant {cfg.variant.upper()} needs {kind} features at {path}. Run `{how}` first."
             )
-        bb = pd.read_parquet(bbox_features_path)
-        drop = [c for c in ("image_path", "damage_types") if c in bb.columns]
-        bb = bb.drop(columns=drop)
-        df = df.merge(bb, on=["image_id", "split"], how="inner")
-        bbox_feat_cols = [c for c in bb.columns
-                          if c not in ("image_id", "split") and not c.startswith("f_")]
-        print(f"[variant b] joined {len(bbox_feat_cols)} bbox features")
+        reg = pd.read_parquet(path)
+        drop = [c for c in ("image_path", "damage_types") if c in reg.columns]
+        reg = reg.drop(columns=drop)
+        df = df.merge(reg, on=["image_id", "split"], how="inner")
+        region_feat_cols = [c for c in reg.columns
+                            if c not in ("image_id", "split") and not c.startswith("f_")]
+        print(f"[variant {cfg.variant}] joined {len(region_feat_cols)} {kind} features")
 
     image_feat_cols = [c for c in df.columns if c.startswith("f_")]
     categorical_cols = ["make", "body_type", "segment"]
-    numeric_extra = ["year"] + bbox_feat_cols
+    numeric_extra = ["year"] + region_feat_cols
     target_col = "cost_usd"
 
     import pandas as pd

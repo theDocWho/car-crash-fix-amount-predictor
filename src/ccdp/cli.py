@@ -522,6 +522,23 @@ def train_extract_bbox_features(
                               max_records_per_split=(smoke_per_split or None))
 
 
+@train_app.command("extract-seg-features")
+def train_extract_seg_features(
+    weights: Path = typer.Option(None, help="yoloseg weights; defaults to promoted run."),
+    out: Path = typer.Option(Path("data/processed/cardd_seg_features.parquet")),
+    gt: bool = typer.Option(False, "--gt", help="Use CarDD polygon areas (no model)."),
+    conf: float = typer.Option(0.25),
+    smoke_per_split: int = typer.Option(0, help="If >0, cap records per split."),
+) -> None:
+    """Aggregate YOLOv8-seg mask-area stats per image for Variant C XGBoost features."""
+    from ccdp.train.extract_seg_features import extract_from_ground_truth, extract_with_seg_model
+    if gt:
+        extract_from_ground_truth(out_path=out)
+    else:
+        extract_with_seg_model(weights=weights, out_path=out, conf=conf,
+                               max_records_per_split=(smoke_per_split or None))
+
+
 @train_app.command("synth-targets")
 def train_synth_targets(
     features_path: Path = typer.Option(Path("data/processed/cardd_features.parquet")),
@@ -535,7 +552,7 @@ def train_synth_targets(
 
 @train_app.command("xgb")
 def train_xgb(
-    variant: str = typer.Option("a", help="'a' (image features only) or 'b' (+ bbox features)."),
+    variant: str = typer.Option("a", help="'a' (image only) | 'b' (+ bbox) | 'c' (+ seg mask area)."),
     n_estimators: int = typer.Option(600),
     max_depth: int = typer.Option(7),
     learning_rate: float = typer.Option(0.05),
@@ -543,17 +560,18 @@ def train_xgb(
     features_path: Path = typer.Option(Path("data/processed/cardd_features.parquet")),
     targets_path: Path = typer.Option(Path("data/processed/cardd_cost_targets.parquet")),
     bbox_features_path: Path = typer.Option(Path("data/processed/cardd_bbox_features.parquet")),
+    seg_features_path: Path = typer.Option(Path("data/processed/cardd_seg_features.parquet")),
 ) -> None:
-    """Train XGBoost — image features (+ bbox stats for variant b) + tabular -> cost."""
-    if variant not in ("a", "b"):
-        console.print("[red]variant must be 'a' or 'b'.[/red]")
+    """Train XGBoost — image features (+ bbox for b / seg mask area for c) + tabular -> cost."""
+    if variant not in ("a", "b", "c"):
+        console.print("[red]variant must be 'a', 'b', or 'c'.[/red]")
         raise typer.Exit(2)
     from ccdp.train.train_xgb import XGBConfig, train as do_train
     cfg = XGBConfig(n_estimators=n_estimators, max_depth=max_depth,
                     learning_rate=learning_rate,
                     tag=(tag or f"xgb_{variant}"), variant=variant)
     best = do_train(cfg, features_path=features_path, targets_path=targets_path,
-                    bbox_features_path=bbox_features_path)
+                    bbox_features_path=bbox_features_path, seg_features_path=seg_features_path)
     console.print(f"[green]Best:[/green] {best}")
 
 
