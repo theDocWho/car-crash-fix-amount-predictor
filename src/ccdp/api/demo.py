@@ -122,7 +122,8 @@ def _estimate(
     drawn on the annotated image. A user-typed make always takes precedence.
     """
     if image is None:
-        return None, "", "Please upload an image.", "", ""
+        # 6 values to match outputs: annotated, id, variant_a, variant_b, variant_d, json
+        return None, "", "Please upload an image.", "", "", ""
     pipes = _get_pipelines()
     pil_image, preprocessing_meta = preprocess(image)
     metadata = _build_metadata(make, model_name, year, body_type)
@@ -149,9 +150,9 @@ def _estimate(
                 banner = annotate_no_detections(
                     pil_image, "No car detected — upload a photo containing a car."
                 )
-                return (banner, id_text,
-                        "_Skipped — no car in image._",
-                        "_Skipped — no car in image._",
+                skip = "_Skipped — no car in image._"
+                # 6 values: annotated, id, variant_a, variant_b, variant_d, json
+                return (banner, id_text, skip, skip, skip,
                         json.dumps(full, indent=2, default=str))
             car_box, car_label = auto.gate.box, auto.gate.label
             if auto.identification is not None:
