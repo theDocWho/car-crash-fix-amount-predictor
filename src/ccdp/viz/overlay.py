@@ -169,6 +169,39 @@ def annotate_car_box(
     return out
 
 
+def annotate_multicar(image: Image.Image, prediction, *, line_width: int = 3,
+                      font_size: int = 15) -> Image.Image:
+    """Draw one coloured box + label per car, plus that car's damage boxes in the
+    same colour — so damages are visually grouped by vehicle."""
+    out = image.convert("RGB").copy()
+    w, h = out.size
+    draw = ImageDraw.Draw(out, mode="RGBA")
+    font = _load_font(font_size)
+    cars = getattr(prediction, "cars", None) or []
+    for car in cars:
+        color = tuple(car.color)
+        x1, y1, x2, y2 = (int(round(v)) for v in car.box)
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=line_width + 1)
+        # damage boxes for this car (thinner, same colour)
+        for det in getattr(car, "detections", []):
+            dx1, dy1, dx2, dy2 = _denormalize(det.get("xywh_norm", (0.5, 0.5, 0, 0)), w, h)
+            draw.rectangle([dx1, dy1, dx2, dy2], outline=color, width=2)
+        # car label chip
+        who = f"{car.make} {car.model}".strip() if car.make else f"{car.label}"
+        label = f"Car {car.index + 1}: {who}  ${car.cost_usd:.0f}"
+        try:
+            tb = draw.textbbox((0, 0), label, font=font)
+            tw, th = tb[2] - tb[0], tb[3] - tb[1]
+        except AttributeError:
+            tw, th = font.getsize(label)
+        pad = 4
+        # chip just INSIDE the box top-left, so multiple cars' labels don't pile up
+        cy1 = min(max(0, y1) + 1, h - th - 2 * pad)
+        draw.rectangle([x1, cy1, x1 + tw + 2 * pad, cy1 + th + 2 * pad], fill=(*color, 235))
+        draw.text((x1 + pad, cy1 + pad), label, fill=(0, 0, 0), font=font)
+    return out
+
+
 def annotate_prediction(image: Image.Image, prediction) -> Image.Image:
     """Convenience wrapper: pull ``.detections`` off a Variant B prediction.
 

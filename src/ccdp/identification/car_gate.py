@@ -54,6 +54,23 @@ class GateResult:
         }
 
 
+@dataclass
+class VehicleInstance:
+    """One detected vehicle (for multi-car grouping): label, score, box, mask."""
+
+    label: str                                       # car | truck | bus
+    score: float
+    box: tuple[float, float, float, float]           # xyxy, original px
+    mask: "object" = None                            # np.ndarray[bool] (H, W) or None
+
+    @property
+    def area_frac(self) -> float:
+        import numpy as np
+        if self.mask is None:
+            return 0.0
+        return float(np.count_nonzero(self.mask)) / float(self.mask.size or 1)
+
+
 def decide(
     boxes: Sequence[Sequence[float]],
     labels: Sequence[int],
@@ -90,6 +107,48 @@ def decide(
         n_vehicles=n_vehicles,
         note=f"{best[2]} ({best[0]:.0%}) — {n_vehicles} vehicle(s) found",
     )
+
+
+def _box_area(b) -> float:
+    return max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+
+
+def _box_iou(a, b) -> float:
+    ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+    ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    union = _box_area(a) + _box_area(b) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _containment(a, b) -> float:
+    """Fraction of box ``a`` that lies inside box ``b``."""
+    ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+    ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    aa = _box_area(a)
+    return inter / aa if aa > 0 else 0.0
+
+
+def nms_vehicles(vehicles: list, iou_thr: float = 0.6, contain_thr: float = 0.8) -> list:
+    """Greedy NMS (highest score first) so one car isn't counted several times.
+
+    Suppresses a candidate when it overlaps a kept box (IoU ≥ ``iou_thr``) **or**
+    is mostly inside one (a sub-detection) **or** mostly contains one (a
+    "whole-scene" super-box) — both common COCO failure modes on busy scenes.
+    """
+    kept: list = []
+    for v in sorted(vehicles, key=lambda x: x.score, reverse=True):
+        dup = False
+        for k in kept:
+            if (_box_iou(v.box, k.box) >= iou_thr
+                    or _containment(v.box, k.box) >= contain_thr
+                    or _containment(k.box, v.box) >= contain_thr):
+                dup = True
+                break
+        if not dup:
+            kept.append(v)
+    return kept
 
 
 def pad_box(
@@ -173,6 +232,51 @@ class CarGate:
         scores = out["scores"].cpu().tolist() if hasattr(out["scores"], "cpu") else out["scores"]
         return decide(boxes, labels, scores, score_threshold=self.score_threshold)
 
+    def detect_all(self, image: ImageLike, score_threshold: Optional[float] = None,
+                   min_area_frac: float = 0.01, nms_iou: float = 0.6) -> list:
+        """Return EVERY distinct vehicle (car/truck/bus) with its mask, for
+        multi-car grouping. Tiny boxes (< ``min_area_frac`` of the image) are
+        dropped and near-duplicate boxes are merged via NMS so one car isn't
+        counted several times. Each item is a :class:`VehicleInstance`."""
+        import torch
+        from PIL import Image
+        from torchvision.transforms.functional import to_tensor
+
+        if isinstance(image, (str, Path)):
+            pil = Image.open(image).convert("RGB")
+        else:
+            pil = image.convert("RGB")
+
+        model = self._ensure_model()
+        device = self._device or "cpu"
+        x = to_tensor(pil).to(device)
+        with torch.no_grad():
+            out = model([x])[0]
+
+        thr = self.score_threshold if score_threshold is None else score_threshold
+        boxes = out["boxes"].cpu().tolist()
+        labels = out["labels"].cpu().tolist()
+        scores = out["scores"].cpu().tolist()
+        masks = out["masks"].cpu().numpy() if "masks" in out else None  # (N,1,H,W) soft, orig size
+
+        vehicles: list[VehicleInstance] = []
+        for i, (box, lab, sc) in enumerate(zip(boxes, labels, scores)):
+            lab = int(lab)
+            if lab not in VEHICLE_LABELS or float(sc) < thr:
+                continue
+            mask = (masks[i, 0] >= 0.5) if masks is not None else None
+            vehicles.append(VehicleInstance(
+                label=VEHICLE_LABELS[lab], score=float(sc),
+                box=(float(box[0]), float(box[1]), float(box[2]), float(box[3])),
+                mask=mask,
+            ))
+        # drop tiny boxes, then merge near-duplicates of the same car
+        img_area = float(pil.size[0] * pil.size[1]) or 1.0
+        vehicles = [v for v in vehicles if _box_area(v.box) / img_area >= min_area_frac]
+        vehicles = nms_vehicles(vehicles, nms_iou)
+        vehicles.sort(key=lambda v: v.score, reverse=True)
+        return vehicles
+
     def crop_to_car(self, image: ImageLike, result: GateResult, pad_frac: float = 0.05):
         """Return a PIL crop around the detected car, or the full image if none."""
         from PIL import Image
@@ -187,4 +291,4 @@ class CarGate:
         return pil.crop(pad_box(result.box, w, h, pad_frac=pad_frac))
 
 
-__all__ = ["CarGate", "GateResult", "VEHICLE_LABELS", "decide", "pad_box"]
+__all__ = ["CarGate", "GateResult", "VehicleInstance", "VEHICLE_LABELS", "decide", "pad_box"]

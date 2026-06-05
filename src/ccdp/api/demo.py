@@ -26,7 +26,12 @@ from ccdp.costing import fx as fxmod
 from ccdp.costing import list_catalogs
 from ccdp.identification.car_identifier import IdentificationResult, infer_segment
 from ccdp.preprocess import preprocess
-from ccdp.viz import annotate_car_box, annotate_no_detections, annotate_prediction
+from ccdp.viz import (
+    annotate_car_box,
+    annotate_multicar,
+    annotate_no_detections,
+    annotate_prediction,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +63,33 @@ def _get_pipelines() -> dict:
         except Exception as e:  # noqa: BLE001
             print(f"[demo] Variant D unavailable: {e}")
             _pipelines["d"] = None
+        try:
+            from ccdp.infer.multi_car import MultiCarPipeline
+            _pipelines["multi"] = MultiCarPipeline()
+        except Exception as e:  # noqa: BLE001
+            print(f"[demo] Multi-car unavailable: {e}")
+            _pipelines["multi"] = None
     return _pipelines
+
+
+def _format_multicar(pred) -> str:
+    """Per-car breakdown markdown for the multi-car mode."""
+    if not pred.cars:
+        return "## Multi-car\n**No vehicles detected.**"
+    lines = [f"## Multi-car — {len(pred.cars)} vehicle(s)\n",
+             f"**Total: {pred.total_cost:.2f} {pred.currency}**\n"]
+    for c in pred.cars:
+        who = f"{c.make} {c.model}".strip() if c.make else f"{c.label} (unknown)"
+        dmg = ", ".join(c.damage_types) or "none"
+        parts = ", ".join(c.parts) or "—"
+        lines.append(
+            f"- **Car {c.index + 1} · {who}** ({c.confidence:.0%}) — "
+            f"{c.cost:.0f} {pred.currency}\n"
+            f"    - damage: {dmg}\n    - parts: {parts}"
+        )
+    if pred.unassigned_damage:
+        lines.append(f"\n_Unassigned damage (no car overlap): {', '.join(pred.unassigned_damage)}_")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +166,28 @@ def _estimate(
             "detector_conf": detector_conf,
         },
     }
+
+    # Multi-car mode: detect every vehicle, identify each, group damage per car.
+    if model_choice == "Multi-car (group damage per car)":
+        mc = pipes.get("multi")
+        if not mc:
+            return (pil_image,
+                    "## Multi-car\n_Model not loaded — needs the yoloseg + parts weights._",
+                    "_Multi-car mode._", "_Multi-car mode._", "_Multi-car mode._",
+                    json.dumps({"error": "multi-car model not loaded"}, indent=2))
+        try:
+            pred = mc.predict(pil_image, currency=currency)
+            full["multi_car"] = pred.to_dict()
+            total = (f"## Total\n**{pred.total_cost:.2f} {pred.currency}** "
+                     f"across {len(pred.cars)} car(s)")
+            return (annotate_multicar(pil_image, pred), _format_multicar(pred),
+                    "_Per-car results shown in the Car-check panel._",
+                    "_Per-car results shown in the Car-check panel._",
+                    total, json.dumps(full, indent=2, default=str))
+        except Exception as e:  # noqa: BLE001
+            return (pil_image, f"## Multi-car\n_Error: {e}_", "", "", "",
+                    json.dumps({"error": str(e)}, indent=2))
+
     id_text = ""
     car_box = None
     car_label = "car"
@@ -324,6 +377,7 @@ def build_demo() -> gr.Blocks:
                         choices=["Variant A (ResNet50 classifier)",
                                  "Variant B (YOLOv8 detector)",
                                  "Variant D (parts-aware seg)",
+                                 "Multi-car (group damage per car)",
                                  "Both"],
                         value="Both",
                         label="Which model?",
