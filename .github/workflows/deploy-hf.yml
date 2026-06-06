@@ -64,20 +64,23 @@ jobs:
         run: |
           set -euo pipefail
           SPACE="${HF_USERNAME}/car-crash-fix-amount-predictor"
-          # Add HF Space as a remote (created on first push if it doesn't exist
-          # — but only when using `huggingface-cli`. To be safe, the Space
-          # should be created once manually at huggingface.co/new-space, or via
-          # the API call below.)
-          if ! git ls-remote "https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co/spaces/${SPACE}" >/dev/null 2>&1; then
-            echo "Space ${SPACE} not found — creating it via the HF API…"
-            curl -sf -X POST \
+          git remote add hf "https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co/spaces/${SPACE}"
+
+          # Force-push so the Space mirrors `main` (single source of truth = GitHub;
+          # we intentionally drop the Space's own commit history).
+          #
+          # The push IS the real connectivity/auth test, so we try it first. Only
+          # if it fails do we attempt to create the Space (best-effort, non-fatal)
+          # and retry. The old logic gated on `git ls-remote`, which occasionally
+          # blipped and wrongly triggered a "create an already-existing Space"
+          # → HTTP 409 → `curl -f` exit 22 → the whole deploy failed for no reason.
+          if ! git push --force hf HEAD:main; then
+            echo "push failed — ensuring the Space exists, then retrying…"
+            curl -s -o /dev/null -w "create-space HTTP %{http_code}\n" -X POST \
               -H "Authorization: Bearer ${HF_TOKEN}" \
               -H "Content-Type: application/json" \
               -d '{"type":"space","name":"car-crash-fix-amount-predictor","sdk":"gradio"}' \
-              https://huggingface.co/api/repos/create
+              https://huggingface.co/api/repos/create || true
+            git push --force hf HEAD:main
           fi
-          git remote add hf "https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co/spaces/${SPACE}"
-          # Force-push so the Space mirrors `main`. We intentionally drop the
-          # Space's own commit history — single source of truth is GitHub.
-          git push --force hf HEAD:main
           echo "Deployed to https://huggingface.co/spaces/${SPACE}"
