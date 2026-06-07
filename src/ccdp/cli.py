@@ -455,6 +455,53 @@ def train_identifier(
     console.print(f"[green]Best checkpoint:[/green] {best}")
 
 
+@train_app.command("identifier-continue")
+def train_identifier_continue(
+    dataset: str = typer.Option("vmmrdb", help="Extension dataset: vmmrdb | compcars."),
+    top_n: int = typer.Option(2000, help="Cap to the N largest classes (vmmrdb). 0 = all."),
+    base_checkpoint: Path = typer.Option(None, help="Base identifier ckpt; defaults to promoted run."),
+    epochs_stage1: int = typer.Option(2),
+    epochs_stage2: int = typer.Option(10),
+    batch_size: int = typer.Option(64),
+    lr_stage1: float = typer.Option(5e-4),
+    lr_stage2: float = typer.Option(5e-5),
+    num_workers: int = typer.Option(4),
+    tag: str = typer.Option(None, help="Defaults to identifier_<dataset>."),
+    no_anchor: bool = typer.Option(False, "--no-anchor", help="Skip the Stanford forgetting anchor."),
+    smoke_batches: int = typer.Option(0, help="If >0, cap batches/epoch — smoke runs."),
+) -> None:
+    """Phase 6: continue-train the identifier on a larger make/model/year dataset.
+
+    Warm-starts the 196-class ResNet-50, swaps the head to the new label space,
+    and two-stage fine-tunes. VMMRdb (CC0 Kaggle mirror) or CompCars.
+    """
+    if dataset == "vmmrdb":
+        from ccdp.data import vmmrdb as ds
+        if top_n:
+            ds.set_top_n(top_n)
+    elif dataset == "compcars":
+        from ccdp.data import compcars as ds
+    else:
+        console.print("[red]dataset must be 'vmmrdb' or 'compcars'.[/red]")
+        raise typer.Exit(2)
+    from ccdp.train.continue_identifier import ContinueConfig, train as do_train
+    from ccdp.costing import load_active
+    try:
+        catalog_id = load_active().catalog_id
+    except FileNotFoundError:
+        catalog_id = None
+    cfg = ContinueConfig(
+        base_checkpoint=(str(base_checkpoint) if base_checkpoint else None),
+        epochs_stage1=epochs_stage1, epochs_stage2=epochs_stage2,
+        batch_size=batch_size, lr_stage1=lr_stage1, lr_stage2=lr_stage2,
+        num_workers=num_workers, tag=(tag or f"identifier_{dataset}"),
+        anchor_eval=not no_anchor,
+    )
+    best = do_train(cfg, dataset=ds, training_catalog_id=catalog_id,
+                    smoke_batches=(smoke_batches or None))
+    console.print(f"[green]Best checkpoint:[/green] {best}")
+
+
 @train_app.command("extract-features")
 def train_extract_features(
     checkpoint: Path = typer.Option(None, help="Classifier checkpoint; defaults to promoted run."),
