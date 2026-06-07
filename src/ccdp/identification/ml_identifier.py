@@ -113,6 +113,10 @@ class MLIdentifier:
         if self._device is None:
             self._device = str(pick_device())
         ck = load_checkpoint(Path(ckpt), map_location=self._device)
+        # A continue-trained checkpoint (CompCars / VMMRdb) embeds its own class
+        # names + count, so the model self-describes regardless of the bundled map.
+        if self._class_names is None and ck.get("class_names"):
+            self._class_names = list(ck["class_names"])
         num_classes = int(ck.get("num_classes") or len(self._names()))
         model = build_resnet50_identifier(num_classes=num_classes, pretrained=False)
         model.load_state_dict(ck["model"])

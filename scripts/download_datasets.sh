@@ -8,6 +8,7 @@
 # Usage:
 #   bash scripts/download_datasets.sh                   # primary datasets only
 #   STANFORD_CARS=1 bash scripts/download_datasets.sh   # also pull Stanford Cars (Phase 1.5)
+#   VMMRDB=1 bash scripts/download_datasets.sh          # also pull VMMRdb (Phase 6, ~tens of GB, CC0)
 #
 set -euo pipefail
 
@@ -27,6 +28,12 @@ SLUGS=(
   # Phase 1.5 make/model/year identifier training (Krause et al. 2013, 196 classes)
   "eduardo4jesus/stanford-cars-dataset"
 )
+
+# Optional, opt-in (large): VMMRdb make/model/year — ~9,170 classes / ~291k imgs.
+# CC0 / public-domain Kaggle mirror. Used to extend the identifier (Phase 6).
+if [[ "${VMMRDB:-0}" == "1" ]]; then
+  SLUGS+=("prabashwara/vmmrdb-dataset")
+fi
 
 # NOTE: ganeshsura/car-damage-detection-and-cost-estimation is intentionally
 # excluded. Its CSV/image join is broken (hashed Roboflow filenames vs imgNNN
