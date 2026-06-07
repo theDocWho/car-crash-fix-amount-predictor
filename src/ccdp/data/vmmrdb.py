@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-ROOT = Path("data/raw/vmmrdb-dataset")
+ROOT = Path("data/raw/vmmrdb-dataset/prabashwara/vmmrdb-dataset")
 _IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp"}
 _YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 
