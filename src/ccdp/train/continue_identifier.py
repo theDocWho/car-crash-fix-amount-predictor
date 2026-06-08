@@ -46,6 +46,8 @@ class ContinueConfig:
     seed: int = 42
     tag: str = "identifier_compcars"
     anchor_eval: bool = True                   # make-level forgetting check on Stanford
+    resume_from: Optional[str] = None          # path to epoch_NNN.pt / last.pt to resume
+    resume_run_dir: Optional[str] = None       # reuse existing run dir instead of creating new
 
 
 def _swap_head(model: nn.Module, new_num_classes: int) -> None:
@@ -152,15 +154,48 @@ def train(
                             lr=cfg.lr_stage1, weight_decay=cfg.weight_decay)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2, factor=0.5)
 
-    run_dir = create_run(
-        variant="identifier", tag=cfg.tag, training_catalog_id=training_catalog_id,
-        notes=f"Continue-train identifier on {dataset.__name__} ({num_classes} classes)",
-    )
+    # ---- resume / fresh run ------------------------------------------------
+    start_epoch = 1
+    best_val, stage = 0.0, 1
+    if cfg.resume_from:
+        resume_path = Path(cfg.resume_from)
+        if not resume_path.exists():
+            raise FileNotFoundError(f"--resume-from path not found: {resume_path}")
+        ck = load_checkpoint(resume_path, map_location=str(device))
+        # Restore weights over the freshly head-swapped model. Class count must match.
+        ckpt_classes = int(ck.get("num_classes") or num_classes)
+        if ckpt_classes != num_classes:
+            raise ValueError(
+                f"resume checkpoint has {ckpt_classes} classes but current dataset has "
+                f"{num_classes}. Refusing to resume across different label spaces.",
+            )
+        model.load_state_dict(ck["model"])
+        start_epoch = int(ck.get("epoch", 0)) + 1
+        stage = int(ck.get("stage", 1))
+        best_val = float(ck.get("best_val", 0.0))
+        # If we resume already inside stage 2, replicate the unfreeze + LR jump that
+        # would have happened at the stage boundary.
+        if stage == 2:
+            set_finetune_stage(model, 2)
+            optimizer = optim.AdamW([p for p in model.parameters() if p.requires_grad],
+                                    lr=cfg.lr_stage2, weight_decay=cfg.weight_decay)
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2, factor=0.5)
+        print(f"[resume] {resume_path} -> start at epoch {start_epoch} "
+              f"(stage {stage}, best_val {best_val:.4f})")
+
+    if cfg.resume_run_dir:
+        run_dir = Path(cfg.resume_run_dir)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[resume] reusing run dir {run_dir}")
+    else:
+        run_dir = create_run(
+            variant="identifier", tag=cfg.tag, training_catalog_id=training_catalog_id,
+            notes=f"Continue-train identifier on {dataset.__name__} ({num_classes} classes)",
+        )
     (run_dir / "config.yaml").write_text("\n".join(f"{k}: {v}" for k, v in asdict(cfg).items()))
 
     total_epochs = cfg.epochs_stage1 + cfg.epochs_stage2
-    best_val, stage = 0.0, 1
-    for epoch in range(1, total_epochs + 1):
+    for epoch in range(start_epoch, total_epochs + 1):
         if epoch == cfg.epochs_stage1 + 1 and stage == 1:
             stage = 2
             set_finetune_stage(model, 2)

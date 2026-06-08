@@ -469,11 +469,20 @@ def train_identifier_continue(
     tag: str = typer.Option(None, help="Defaults to identifier_<dataset>."),
     no_anchor: bool = typer.Option(False, "--no-anchor", help="Skip the Stanford forgetting anchor."),
     smoke_batches: int = typer.Option(0, help="If >0, cap batches/epoch — smoke runs."),
+    resume_from: Path = typer.Option(None, "--resume", "--resume-from",
+                                     help="Resume from this epoch_NNN.pt / last.pt "
+                                          "(skip already-finished epochs)."),
+    resume_run_dir: Path = typer.Option(None, "--resume-run-dir",
+                                        help="Write new checkpoints into this existing run dir "
+                                             "instead of creating a fresh run."),
 ) -> None:
     """Phase 6: continue-train the identifier on a larger make/model/year dataset.
 
     Warm-starts the 196-class ResNet-50, swaps the head to the new label space,
     and two-stage fine-tunes. VMMRdb (CC0 Kaggle mirror) or CompCars.
+
+    Crash-resume: re-launch with ``--resume <run_dir>/last.pt --resume-run-dir <run_dir>``
+    to pick up from the next epoch with the same run-id and same on-disk layout.
     """
     if dataset == "vmmrdb":
         from ccdp.data import vmmrdb as ds
@@ -496,6 +505,8 @@ def train_identifier_continue(
         batch_size=batch_size, lr_stage1=lr_stage1, lr_stage2=lr_stage2,
         num_workers=num_workers, tag=(tag or f"identifier_{dataset}"),
         anchor_eval=not no_anchor,
+        resume_from=(str(resume_from) if resume_from else None),
+        resume_run_dir=(str(resume_run_dir) if resume_run_dir else None),
     )
     best = do_train(cfg, dataset=ds, training_catalog_id=catalog_id,
                     smoke_batches=(smoke_batches or None))
