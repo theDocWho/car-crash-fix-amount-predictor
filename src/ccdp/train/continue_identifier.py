@@ -48,6 +48,15 @@ class ContinueConfig:
     anchor_eval: bool = True                   # make-level forgetting check on Stanford
     resume_from: Optional[str] = None          # path to epoch_NNN.pt / last.pt to resume
     resume_run_dir: Optional[str] = None       # reuse existing run dir instead of creating new
+    # --- Option 3: car-bbox crop preprocessing for VMMRdb -------------------
+    # When ``use_bbox_crop=True`` and ``bbox_cache_path`` points to a JSON
+    # produced by ``scripts/precompute_vmmrdb_bboxes.py``, the VMMRdb
+    # DataLoader crops to the per-image car bbox before transforms — closing
+    # the preprocessing gap with Stanford. We also switch to a Stanford-like
+    # recipe (full LR, more epochs) because the bbox crop makes this closer
+    # to fresh fine-tuning than a gentle continue.
+    use_bbox_crop: bool = False
+    bbox_cache_path: Optional[str] = None
 
 
 def _swap_head(model: nn.Module, new_num_classes: int) -> None:
@@ -105,7 +114,23 @@ def make_level_anchor_accuracy(model, class_names, device, max_samples: int = 50
 
 def _build_loaders(cfg: ContinueConfig, dataset=compcars):
     classes = dataset.load_classes()
-    samples = dataset.load_train_samples()
+    # Pipe the bbox cache through *only* for datasets whose load_train_samples
+    # accepts it. Today that's VMMRdb (where Option 3 lives); Stanford/CompCars
+    # don't need it (Stanford has GT bboxes built in; CompCars unaffected).
+    if cfg.use_bbox_crop and cfg.bbox_cache_path and hasattr(dataset, "load_train_samples"):
+        try:
+            samples = dataset.load_train_samples(bbox_cache_path=cfg.bbox_cache_path)
+            n_with_bbox = sum(1 for s in samples if getattr(s, "bbox", None) is not None)
+            print(f"[bbox-crop] loaded cache {cfg.bbox_cache_path}; "
+                  f"{n_with_bbox}/{len(samples)} samples have a car bbox "
+                  f"({n_with_bbox / max(len(samples), 1):.1%})")
+        except TypeError:
+            # Older datasets without the kwarg: fall back to no-crop loading.
+            print("[bbox-crop] dataset doesn't accept bbox_cache_path — running without crops")
+            samples = dataset.load_train_samples()
+    else:
+        samples = dataset.load_train_samples()
+
     train_samples, val_samples = dataset.split_train_val(
         samples, val_fraction=cfg.val_fraction, seed=cfg.seed,
     )

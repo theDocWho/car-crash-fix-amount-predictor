@@ -475,6 +475,16 @@ def train_identifier_continue(
     resume_run_dir: Path = typer.Option(None, "--resume-run-dir",
                                         help="Write new checkpoints into this existing run dir "
                                              "instead of creating a fresh run."),
+    use_bbox_crop: bool = typer.Option(
+        False, "--use-bbox-crop",
+        help="Option 3: crop each VMMRdb image to its precomputed car bbox before "
+             "transforms (closes the preprocessing gap with Stanford). When enabled "
+             "without explicit LR / epoch overrides, switches to a Stanford-like "
+             "recipe (lr 1e-3 / 1e-4, 5 + 25 epochs)."),
+    bbox_cache: Path = typer.Option(
+        None, "--bbox-cache",
+        help="JSON cache from scripts/precompute_vmmrdb_bboxes.py. "
+             "Required when --use-bbox-crop is set."),
 ) -> None:
     """Phase 6: continue-train the identifier on a larger make/model/year dataset.
 
@@ -484,6 +494,20 @@ def train_identifier_continue(
     Crash-resume: re-launch with ``--resume <run_dir>/last.pt --resume-run-dir <run_dir>``
     to pick up from the next epoch with the same run-id and same on-disk layout.
     """
+    if use_bbox_crop and not bbox_cache:
+        console.print("[red]--use-bbox-crop requires --bbox-cache PATH (run "
+                      "scripts/precompute_vmmrdb_bboxes.py first).[/red]")
+        raise typer.Exit(2)
+    # Auto-promote LR / epochs to Stanford-like recipe when bbox-crop is on and
+    # the user kept the default "gentle continue" values. This is the recipe
+    # change Option 3 explicitly wants — see notebook §2.4 / draft PR.
+    if use_bbox_crop:
+        if epochs_stage1 == 2 and epochs_stage2 == 10:
+            epochs_stage1, epochs_stage2 = 5, 25
+        if lr_stage1 == 5e-4 and lr_stage2 == 5e-5:
+            lr_stage1, lr_stage2 = 1e-3, 1e-4
+        console.print(f"[yellow][bbox-crop] Stanford-like recipe active: "
+                      f"lr {lr_stage1}/{lr_stage2}, epochs {epochs_stage1}+{epochs_stage2}[/yellow]")
     if dataset == "vmmrdb":
         from ccdp.data import vmmrdb as ds
         if top_n:
@@ -507,6 +531,8 @@ def train_identifier_continue(
         anchor_eval=not no_anchor,
         resume_from=(str(resume_from) if resume_from else None),
         resume_run_dir=(str(resume_run_dir) if resume_run_dir else None),
+        use_bbox_crop=use_bbox_crop,
+        bbox_cache_path=(str(bbox_cache) if bbox_cache else None),
     )
     best = do_train(cfg, dataset=ds, training_catalog_id=catalog_id,
                     smoke_batches=(smoke_batches or None))
