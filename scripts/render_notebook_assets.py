@@ -202,24 +202,27 @@ def execute_preview_cells(nb_path: Path) -> int:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--notebook", type=Path, default=NB_PATH,
+                    help=f"Notebook to render (default: {NB_PATH.name}).")
     ap.add_argument("--skip-diagrams", action="store_true", help="Skip Mermaid rendering")
     ap.add_argument("--skip-execute", action="store_true", help="Skip cell execution")
     args = ap.parse_args()
 
-    print(f"Reading {NB_PATH}")
-    nb = json.loads(NB_PATH.read_text())
+    nb_path = args.notebook
+    print(f"Reading {nb_path}")
+    nb = json.loads(nb_path.read_text())
 
     if not args.skip_diagrams:
         print("\n[1/2] Rendering Mermaid diagrams to PNG…")
         n = replace_mermaid_blocks(nb)
         print(f"  replaced {n} mermaid blocks with image references")
-        NB_PATH.write_text(json.dumps(nb, indent=1))
+        nb_path.write_text(json.dumps(nb, indent=1))
 
     if not args.skip_execute:
         print("\n[2/2] Executing preview cells to bake static outputs…")
-        execute_preview_cells(NB_PATH)
+        execute_preview_cells(nb_path)
 
-    print(f"\nDone. {NB_PATH}")
+    print(f"\nDone. {nb_path}")
     print(f"      {DIAGRAMS_DIR} ({sum(1 for _ in DIAGRAMS_DIR.glob('*.png'))} PNGs)")
 
 
