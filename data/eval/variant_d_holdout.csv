@@ -1,0 +1,21 @@
+image_path,gt_cost_usd_low,gt_cost_usd_mid,gt_cost_usd_high,notes
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000012.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000015.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000023.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000033.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000040.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000042.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000044.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000057.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000082.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000088.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000090.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000106.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000128.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000152.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000165.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000175.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000185.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000191.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000204.jpg,400,800,1500,DRAFT — review the cost range and overwrite
+data/raw/car-damage-detection/CarDD_release/CarDD_COCO/test2017/000214.jpg,400,800,1500,DRAFT — review the cost range and overwrite
