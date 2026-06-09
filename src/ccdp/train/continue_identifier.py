@@ -48,13 +48,34 @@ class ContinueConfig:
     anchor_eval: bool = True                   # make-level forgetting check on Stanford
     resume_from: Optional[str] = None          # path to epoch_NNN.pt / last.pt to resume
     resume_run_dir: Optional[str] = None       # reuse existing run dir instead of creating new
+    # --- Option 3: car-bbox crop preprocessing for VMMRdb -------------------
+    # When ``use_bbox_crop=True`` and ``bbox_cache_path`` points to a JSON
+    # produced by ``scripts/precompute_vmmrdb_bboxes.py``, the VMMRdb
+    # DataLoader crops to the per-image car bbox before transforms — closing
+    # the preprocessing gap with Stanford. We also switch to a Stanford-like
+    # recipe (full LR, more epochs) because the bbox crop makes this closer
+    # to fresh fine-tuning than a gentle continue.
+    use_bbox_crop: bool = False
+    bbox_cache_path: Optional[str] = None
 
 
-def _swap_head(model: nn.Module, new_num_classes: int) -> None:
-    """Re-initialise only the final Linear(512 -> N) for the new label space."""
+def _swap_head(model: nn.Module, new_num_classes: int) -> bool:
+    """Re-initialise the final ``Linear(512 -> N)`` only when the label space
+    actually changes. Returns ``True`` if a swap happened, ``False`` if the
+    existing head was preserved.
+
+    When continuing from a checkpoint that already has the same N (e.g. v0.2.1
+    → Option 3 retrain on the same 1163 VMMRdb classes), discarding the head
+    throws away a useful warm start. This guard keeps the head intact in that
+    case and only resets it when the label space genuinely differs (e.g. v0.1.0
+    Stanford 196 → VMMRdb 1163).
+    """
     final = model.fc[-1]
     in_features = final.in_features
+    if final.out_features == new_num_classes:
+        return False
     model.fc[-1] = nn.Linear(in_features, new_num_classes)
+    return True
 
 
 def _load_warm_start(base_ckpt: Path, new_num_classes: int, device) -> nn.Module:
@@ -62,7 +83,9 @@ def _load_warm_start(base_ckpt: Path, new_num_classes: int, device) -> nn.Module
     old_classes = int(ck.get("num_classes") or 196)
     model = build_resnet50_identifier(num_classes=old_classes, pretrained=False)
     model.load_state_dict(ck["model"])
-    _swap_head(model, new_num_classes)
+    swapped = _swap_head(model, new_num_classes)
+    print(f"[warm-start] head: old={old_classes} new={new_num_classes} "
+          f"→ {'swapped (fresh head)' if swapped else 'preserved (same label space)'}")
     return model.to(device)
 
 
@@ -105,7 +128,23 @@ def make_level_anchor_accuracy(model, class_names, device, max_samples: int = 50
 
 def _build_loaders(cfg: ContinueConfig, dataset=compcars):
     classes = dataset.load_classes()
-    samples = dataset.load_train_samples()
+    # Pipe the bbox cache through *only* for datasets whose load_train_samples
+    # accepts it. Today that's VMMRdb (where Option 3 lives); Stanford/CompCars
+    # don't need it (Stanford has GT bboxes built in; CompCars unaffected).
+    if cfg.use_bbox_crop and cfg.bbox_cache_path and hasattr(dataset, "load_train_samples"):
+        try:
+            samples = dataset.load_train_samples(bbox_cache_path=cfg.bbox_cache_path)
+            n_with_bbox = sum(1 for s in samples if getattr(s, "bbox", None) is not None)
+            print(f"[bbox-crop] loaded cache {cfg.bbox_cache_path}; "
+                  f"{n_with_bbox}/{len(samples)} samples have a car bbox "
+                  f"({n_with_bbox / max(len(samples), 1):.1%})")
+        except TypeError:
+            # Older datasets without the kwarg: fall back to no-crop loading.
+            print("[bbox-crop] dataset doesn't accept bbox_cache_path — running without crops")
+            samples = dataset.load_train_samples()
+    else:
+        samples = dataset.load_train_samples()
+
     train_samples, val_samples = dataset.split_train_val(
         samples, val_fraction=cfg.val_fraction, seed=cfg.seed,
     )
