@@ -59,11 +59,23 @@ class ContinueConfig:
     bbox_cache_path: Optional[str] = None
 
 
-def _swap_head(model: nn.Module, new_num_classes: int) -> None:
-    """Re-initialise only the final Linear(512 -> N) for the new label space."""
+def _swap_head(model: nn.Module, new_num_classes: int) -> bool:
+    """Re-initialise the final ``Linear(512 -> N)`` only when the label space
+    actually changes. Returns ``True`` if a swap happened, ``False`` if the
+    existing head was preserved.
+
+    When continuing from a checkpoint that already has the same N (e.g. v0.2.1
+    → Option 3 retrain on the same 1163 VMMRdb classes), discarding the head
+    throws away a useful warm start. This guard keeps the head intact in that
+    case and only resets it when the label space genuinely differs (e.g. v0.1.0
+    Stanford 196 → VMMRdb 1163).
+    """
     final = model.fc[-1]
     in_features = final.in_features
+    if final.out_features == new_num_classes:
+        return False
     model.fc[-1] = nn.Linear(in_features, new_num_classes)
+    return True
 
 
 def _load_warm_start(base_ckpt: Path, new_num_classes: int, device) -> nn.Module:
@@ -71,7 +83,9 @@ def _load_warm_start(base_ckpt: Path, new_num_classes: int, device) -> nn.Module
     old_classes = int(ck.get("num_classes") or 196)
     model = build_resnet50_identifier(num_classes=old_classes, pretrained=False)
     model.load_state_dict(ck["model"])
-    _swap_head(model, new_num_classes)
+    swapped = _swap_head(model, new_num_classes)
+    print(f"[warm-start] head: old={old_classes} new={new_num_classes} "
+          f"→ {'swapped (fresh head)' if swapped else 'preserved (same label space)'}")
     return model.to(device)
 
 
