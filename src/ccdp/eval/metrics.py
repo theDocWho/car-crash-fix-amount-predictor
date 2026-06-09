@@ -73,6 +73,65 @@ def per_class_prf(
 # ---------------------------------------------------------------------------
 
 
+def multiclass_prf(
+    preds: np.ndarray,
+    labels: np.ndarray,
+    class_names: Sequence[str],
+) -> dict:
+    """Per-class precision/recall/F1 + macro/micro F1 for a single-label
+    multiclass problem (e.g. the ResNet-50 identifier).
+
+    Args:
+        preds: integer array of shape ``(N,)`` — predicted class index per sample.
+        labels: integer array of shape ``(N,)`` — ground-truth class index.
+        class_names: length-``C`` sequence — used as keys in the per-class dict.
+
+    Same return schema as :func:`per_class_prf` plus ``"accuracy"`` and
+    ``"confusion"`` (a ``(C, C)`` int ndarray, rows=true, cols=pred). We avoid
+    sklearn so this stays import-light; the formulas are textbook.
+    """
+    preds = np.asarray(preds, dtype=np.int64)
+    labels = np.asarray(labels, dtype=np.int64)
+    C = len(class_names)
+    confusion = np.zeros((C, C), dtype=np.int64)
+    for t, p in zip(labels, preds):
+        if 0 <= t < C and 0 <= p < C:
+            confusion[t, p] += 1
+
+    tp = np.diag(confusion).astype(np.float64)
+    support = confusion.sum(axis=1).astype(np.float64)              # true count per class
+    predicted = confusion.sum(axis=0).astype(np.float64)            # predicted count per class
+    precision = np.where(predicted > 0, tp / np.maximum(predicted, 1), 0.0)
+    recall = np.where(support > 0, tp / np.maximum(support, 1), 0.0)
+    f1 = np.where(
+        precision + recall > 0,
+        2 * precision * recall / np.maximum(precision + recall, 1e-9),
+        0.0,
+    )
+
+    per_class = {
+        class_names[i]: {
+            "precision": float(precision[i]),
+            "recall": float(recall[i]),
+            "f1": float(f1[i]),
+            "support": int(support[i]),
+        }
+        for i in range(C)
+    }
+    n = int(labels.size)
+    accuracy = float(tp.sum() / max(n, 1))
+    macro_f1 = float(f1.mean())
+    # micro-F1 == accuracy for single-label multiclass; include for symmetry.
+    return {
+        "per_class": per_class,
+        "macro_f1": macro_f1,
+        "micro_f1": accuracy,
+        "accuracy": accuracy,
+        "confusion": confusion,
+        "class_names": list(class_names),
+    }
+
+
 def regression_metrics(y_true, y_pred) -> dict:
     """RMSE, MAE, MAPE (percent), R² on a 1-D vector of predictions."""
     y_true = np.asarray(y_true, dtype=float)
