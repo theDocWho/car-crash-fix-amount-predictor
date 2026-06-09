@@ -37,3 +37,7 @@ runs/
 !data/parts_cost_catalog/
 !data/parts_cost_catalog/*.yaml
 .train.*
+
+# Built submission package (use scripts/build_submission_package.py)
+submission_package/
+ccdp_submission_v*.zip
