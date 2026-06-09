@@ -258,30 +258,30 @@ def draft_variant_d_holdout() -> Path:
 # ---------------------------------------------------------------------------
 
 def section_2_4() -> list[dict]:
-    return [_md_cell("2.4", """### 2.4 Why 0.40 on VMMRdb vs 0.77 on Stanford — is the model worse?
+    return [_md_cell("2.4", """### 2.4 Why VMMRdb scores 0.41 vs Stanford 0.77 — is the model worse?
 
-Short answer: **no — the underlying model is the same backbone, fine-tuned to a much harder problem with a recipe regression we accepted for safety.** Treat the 0.40 vs 0.77 gap as *capability extension, not quality drop*. Six factors, biggest first:
+Short answer: **no — the underlying model is the same backbone, fine-tuned to a much harder problem with a recipe regression we accepted for safety.** Treat the 0.41 vs 0.77 gap as *capability extension, not quality drop*. Six factors, biggest first:
 
 | # | Factor | Effect |
 |---|--------|--------|
 | 1 | **Preprocessing mismatch** — Stanford trains on **GT-bbox car crops**, VMMRdb on **full-frame photos** (no bbox available). | **~10–15 pts** — the network spends capacity locating the car instead of classifying it. Biggest single factor. |
 | 2 | **Class granularity** — Stanford = 196 makes/models, VMMRdb-Kaggle = 1163 *year-level* classes. Many pairs (e.g. 2014 Camry vs 2015 Camry) are visually indistinguishable. | A correct "make-level" prediction can still be a wrong row. |
-| 3 | **Chance-normalised lift** — Stanford: 0.77 / (1/196) ≈ **151× chance**. VMMRdb: 0.40 / (1/1163) ≈ **465× chance**. The model is extracting *more* signal on VMMRdb. | The headline number understates the model. |
+| 3 | **Chance-normalised lift** — Stanford: 0.77 / (1/196) ≈ **151× chance**. VMMRdb: 0.41 / (1/1163) ≈ **477× chance**. The model is extracting *more* signal on VMMRdb. | The headline number understates the model. |
 | 4 | **Data quality** — Stanford was curated for the original paper. The VMMRdb Kaggle mirror is web-scraped and contains genuine label noise. | Puts a hard ceiling on val acc regardless of architecture. |
 | 5 | **Training budget** — Stanford ran ~30 epochs at full Stanford LR (1e-3 / 1e-4). The VMMRdb continue-train used 12 epochs at **deliberately lower** LR (5e-4 / 5e-5) to preserve the warm-started backbone. | Conservative on purpose, undertrained in hindsight. |
 | 6 | **Head-swap reset** — the final `Linear(512→1163)` was re-initialised from scratch; the backbone is warm but the classifier has to relearn 1163 row mappings. | First few epochs of stage 2 are dominated by head warm-up. |
 
 **What this means for downstream Variant D.** The cost catalog uses *make → segment tier* (economy / mid / luxury), so confusing two trims of the same make/model is harmless. The number that matters is the **make-level accuracy**, not the full 1163-way top-1 — §2.6 reports both.
 
-**What we're doing about it.**
+**Three improvement options — Options 1+2 shipped, Option 3 in draft PR.**
 
-| Option | Fixes | Expected val | Expected make-anchor |
-|---|---|---|---|
-| 1 — more stage-2 epochs *(running)* | undertrained head | ~0.45 | ~0.13 (no recovery) |
-| 2 — low-LR annealing pass | catastrophic forgetting | ~0.47 | ~0.30 |
-| **3 — Mask R-CNN auto-crop VMMRdb + Stanford recipe** *(in draft PR)* | **the root cause: preprocessing mismatch** | **~0.50–0.55** | **~0.45–0.55** |
+| Option | Status | Fixes | Val acc | Make-anchor |
+|---|---|---|---|---|
+| 1 — more stage-2 epochs (v0.2.0) | ✅ shipped | undertrained head | **0.3304** | 0.163 |
+| 2 — low-LR annealing pass (**v0.2.1, current**) | ✅ shipped | catastrophic forgetting | **0.4114** | TBD |
+| **3 — Mask R-CNN auto-crop VMMRdb + Stanford recipe** | 🛠 draft PR #31 | **the root cause: preprocessing mismatch** | **~0.50–0.55 expected** | **~0.45–0.55 expected** |
 
-Option 3 is the right structural fix — the others are workarounds. The Stanford-only fallback notebook (`ccdp_submission_stanford.ipynb`) is kept in parallel as a safety net.
+Option 2 delivered a **+8 pp** lift (0.33 → 0.41) by giving the backbone one more pass at a very low LR — addressing factors #5 (training budget) and #6 (head-swap reset). Option 3 is still the right structural fix because it targets the *biggest* factor (#1, preprocessing) that Options 1+2 don't touch. The Stanford-only fallback notebook (`ccdp_submission_stanford.ipynb`) is kept in parallel as a safety net until Option 3 ships.
 """)]
 
 
