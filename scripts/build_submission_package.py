@@ -19,20 +19,51 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "submission_package"
-PKG_NAME = "ccdp_submission_v0.2.0"
 
-# Map of submission-package weight name -> source path on the dev machine.
-# `identifier.pt` is the NEW VMMRdb-trained one (101 MB) from the Colab run;
-# the production/ identifier predates that and is the Stanford-only version.
-WEIGHT_SOURCES = {
-    "identifier.pt": ROOT / "checkpoints/identifier/identifier.pt",
-    "damage_seg.pt": ROOT / "checkpoints/production/yoloseg.pt",
-    "parts_seg.pt":  ROOT / "checkpoints/production/parts.pt",
-    "damage_det.pt": ROOT / "checkpoints/production/detector.pt",
-    # damage_cls.pt (Variant A) is 283 MB — skipped to keep the zip portal-friendly.
-    # The notebook's Variant A cell handles the missing-weight case gracefully.
+# Two variants ship side by side:
+#  - vmmrdb (default, mainline)  : 1163-class VMMRdb continue-train identifier
+#  - stanford (safety-net fallback): 196-class Stanford-only identifier
+VARIANT_CONFIG = {
+    "vmmrdb": {
+        "pkg_name": "ccdp_submission_v0.2.0",
+        "out_dir": ROOT / "submission_package",
+        "notebook": ROOT / "notebooks" / "ccdp_submission.ipynb",
+        "identifier_src": ROOT / "checkpoints/identifier/identifier.pt",
+        "identifier_label": "ResNet-50 make/model identifier (VMMRdb 1163-class, val 0.3304)",
+    },
+    "stanford": {
+        "pkg_name": "ccdp_submission_v0.2.0_stanford",
+        "out_dir": ROOT / "submission_package_stanford",
+        "notebook": ROOT / "notebooks" / "ccdp_submission_stanford.ipynb",
+        "identifier_src": ROOT / "checkpoints/production/identifier_stanford.pt",
+        "identifier_label": "ResNet-50 make/model identifier (Stanford-Cars 196-class, val 0.7703)",
+    },
 }
+
+# Default kept for back-compat with callers that import these directly.
+OUT = VARIANT_CONFIG["vmmrdb"]["out_dir"]
+PKG_NAME = VARIANT_CONFIG["vmmrdb"]["pkg_name"]
+
+
+def weight_sources_for(variant: str) -> dict[str, Path]:
+    """Map of bundled-weight name -> source path for the given variant.
+
+    `identifier.pt` differs across variants (VMMRdb 1163-class vs Stanford
+    196-class); damage_seg / parts_seg / damage_det are identical because
+    everything downstream of the identifier is the same pipeline.
+    """
+    cfg = VARIANT_CONFIG[variant]
+    return {
+        "identifier.pt": cfg["identifier_src"],
+        "damage_seg.pt": ROOT / "checkpoints/production/yoloseg.pt",
+        "parts_seg.pt":  ROOT / "checkpoints/production/parts.pt",
+        "damage_det.pt": ROOT / "checkpoints/production/detector.pt",
+        # damage_cls.pt (Variant A) is 283 MB — skipped in both variants.
+    }
+
+
+# Retained for back-compat with anything importing this module.
+WEIGHT_SOURCES = weight_sources_for("vmmrdb")
 
 # CarDD val images we ship as the demo inputs.
 SAMPLE_IMAGE_DIR = ROOT / "data/raw/car-damage-detection/CarDD_release/CarDD_COCO/val2017"
@@ -61,17 +92,29 @@ pydantic>=2.6
 """
 
 
-README_MD = f"""\
+def _build_readme(variant: str) -> str:
+    cfg = VARIANT_CONFIG[variant]
+    pkg_name = cfg["pkg_name"]
+    id_label = cfg["identifier_label"]
+    flavor_note = (
+        "**This is the Stanford-only fallback variant.** The mainline submission "
+        "(`ccdp_submission_v0.2.0.zip`) uses the VMMRdb-trained 1163-class "
+        "identifier; this fallback uses the proven 196-class Stanford-only "
+        "identifier (val 0.7703) as a safety net. Downstream (damage seg, parts "
+        "seg, Variant D) is identical between the two.\n\n"
+        if variant == "stanford" else ""
+    )
+    return f"""\
 # CCDP — Car Crash Fix-Amount Predictor (capstone submission package)
 
-Standalone reproducible bundle of the project. **No internet, git, or
+{flavor_note}Standalone reproducible bundle of the project. **No internet, git, or
 GitHub-release download required** — code, trained weights, and sample
 images are all in this folder.
 
 ## What's in here
 
 ```
-{PKG_NAME}/
+{pkg_name}/
 ├── README.md                 # this file
 ├── ccdp_submission.ipynb     # the single-notebook submission
 ├── requirements.txt          # pip deps
@@ -79,7 +122,7 @@ images are all in this folder.
 ├── CITATIONS.md              # dataset citations
 ├── src/ccdp/                 # the Python package (vendored)
 ├── models/                   # 4 trained model weights (~120 MB)
-│   ├── identifier.pt         # ResNet-50 make/model identifier (VMMRdb 1163-class)
+│   ├── identifier.pt         # {id_label}
 │   ├── damage_seg.pt         # YOLOv8-seg damage masks (CarDD nc=6)
 │   ├── parts_seg.pt          # YOLOv8-seg car-parts masks (nc=15)
 │   └── damage_det.pt         # YOLOv8 damage box detector (Variant B)
@@ -91,15 +134,9 @@ images are all in this folder.
 ### Option A — Locally (recommended for review)
 
 ```bash
-# 1. Create a fresh Python 3.10+ venv
-python -m venv .venv
-source .venv/bin/activate
-
-# 2. Install deps + the bundled package
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
-
-# 3. Launch Jupyter
 pip install jupyter
 jupyter lab        # or: jupyter notebook
 ```
@@ -110,68 +147,49 @@ is required to see results** — every training cell is guarded by
 
 ### Option B — Google Colab
 
-1. Zip this folder, upload to Google Drive.
-2. Open a new Colab notebook, run:
+1. Upload the zip to Google Drive.
+2. In a new Colab notebook:
 
    ```python
    from google.colab import drive; drive.mount('/content/drive')
-   !unzip -q /content/drive/MyDrive/{PKG_NAME}.zip -d /content/
-   %cd /content/{PKG_NAME}
-   !pip -q install -r requirements.txt
-   !pip -q install -e .
+   !unzip -q /content/drive/MyDrive/{pkg_name}.zip -d /content/
+   %cd /content/{pkg_name}
+   !pip -q install -r requirements.txt && pip -q install -e .
    ```
 
 3. Open `ccdp_submission.ipynb` from the file browser and run.
 
-The notebook auto-detects Colab vs. local and adjusts paths.
-
 ## What the notebook does
 
-1. **§1** Sanity-check the environment and copy bundled weights into the
-   expected `checkpoints/production/` path.
+1. **§1** Environment + bundled-weight wiring.
 2. **§1.4** Datasets used + citations.
-3. **§1.5** Live preview of sample images.
-4. **§2** Identifier training pipeline + final v0.2.0 metrics (1163-class
-   val acc 0.3304, Stanford make-anchor 0.163).
+3. **§1.5** Sample-image preview.
+4. **§2** Identifier — training narrative, curves, per-class F1, confusion matrices.
 5. **§3** Damage segmentation training (CarDD nc=6).
 6. **§3b** (optional) Path A extension with HITL.
 7. **§4** Parts segmentation training (carparts nc=15).
-8. **§5–§8** Variant A → B → C → D walkthrough (the core methodology).
+8. **§5–§8** Variant A → B → C → D walkthrough.
 9. **§9** Multi-car extension.
-10. **§10** Live inference demo on sample images.
-11. **§11** Reproducibility checklist + final metrics table.
-
-## What if I want to re-train?
-
-Every training cell is guarded:
-
-```python
-RUN_TRAINING = False
-# Production values:  epochs=80, batch=16, imgsz=640, patience=20
-SMOKE = dict(epochs=1, batch=2, imgsz=320, patience=5)
-if RUN_TRAINING:
-    ...  # uses smoke values by default; substitute production for real runs
-```
-
-Flip `RUN_TRAINING = True` and swap in production values when on a GPU.
+10. **§10** Live inference demo.
+11. **§11** Reproducibility checklist + final metrics + Variant D smoke holdout MAE.
 
 ## Notes for the reviewer
 
 - `models/identifier.pt` is **self-describing** — `class_names`, `num_classes`,
-  `best_val`, and the training config are embedded in the .pt itself.
-  §2.2 of the notebook loads and prints them as the live model card.
-- The `damage_cls.pt` (Variant A multilabel head) is NOT included — it's
-  283 MB and Variant A is shown only schematically. Variant D is what
-  ships in production.
-- Datasets cited in `CITATIONS.md` are NOT bundled — see citations for
-  the canonical Kaggle / HF source links.
+  `best_val`, and the training config are embedded in the .pt itself. §2.2
+  loads and prints them as the live model card.
+- The `damage_cls.pt` (Variant A multilabel head) is NOT included — 283 MB
+  and Variant A is shown only schematically. Variant D is what ships.
+- Datasets cited in `CITATIONS.md` are NOT bundled — see citations for the
+  Kaggle / HF source links.
 
 ## Links
 
 - Code repo: <https://github.com/theDocWho/car-crash-fix-amount-predictor>
 - Weights release: v0.2.0 on the same repo
-- Live demo: HuggingFace Space (see repo README)
 """
+
+
 
 
 # -----------------------------------------------------------------------------
@@ -283,7 +301,55 @@ def patch_notebook(src_nb: Path, dst_nb: Path) -> None:
 # Build
 # -----------------------------------------------------------------------------
 
-def build(out: Path, with_zip: bool) -> None:
+def _ensure_stanford_identifier_checkpoint() -> Path:
+    """Generate ``checkpoints/production/identifier_stanford.pt`` if missing.
+
+    Slimmed copy of the Stanford-Cars 196-class best.pt (drops optimizer/scheduler
+    state, ~280 MB → 99 MB) plus ``class_names`` injected from the dataset — so
+    §2.2 of the notebook can show a self-describing model card without needing
+    the source repo's data loaders at notebook-bake time.
+    """
+    dst = ROOT / "checkpoints/production/identifier_stanford.pt"
+    if dst.exists():
+        return dst
+    src = ROOT / "checkpoints/identifier/run_2026-05-13T14-30-04_identifier_v2/best.pt"
+    if not src.exists():
+        sys.exit(
+            f"FATAL: Stanford run dir missing — {src}\n"
+            f"Cannot synthesize identifier_stanford.pt without the original run."
+        )
+    import torch
+    from ccdp.data import stanford_cars as sc
+
+    print(f"  synthesizing identifier_stanford.pt from {src.name}…")
+    ck = torch.load(src, map_location="cpu", weights_only=False)
+    classes = sc.load_classes()
+    slim = {
+        "model": ck["model"],
+        "epoch": ck["epoch"],
+        "stage": ck["stage"],
+        "best_val": ck["best_val"],
+        "num_classes": ck["num_classes"],
+        "class_names": [c.raw_name for c in classes],
+        "config": ck.get("config", {}),
+    }
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(slim, dst)
+    print(f"  wrote {dst}  ({dst.stat().st_size/1e6:.1f} MB, {slim['num_classes']} classes)")
+    return dst
+
+
+def build(out: Path, with_zip: bool, variant: str = "vmmrdb") -> None:
+    cfg = VARIANT_CONFIG[variant]
+    if variant == "stanford":
+        _ensure_stanford_identifier_checkpoint()
+    weight_sources = weight_sources_for(variant)
+    pkg_name = cfg["pkg_name"]
+    notebook_src = cfg["notebook"]
+    print(f"=== Building variant '{variant}' -> {out} ===")
+    print(f"    identifier: {cfg['identifier_label']}")
+    if not cfg["identifier_src"].exists():
+        sys.exit(f"FATAL: identifier source missing — {cfg['identifier_src']}")
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
@@ -305,7 +371,7 @@ def build(out: Path, with_zip: bool) -> None:
     print("wrote requirements.txt")
 
     # 4. README.md
-    (out / "README.md").write_text(README_MD)
+    (out / "README.md").write_text(_build_readme(variant))
     print("wrote README.md")
 
     # 5. CITATIONS.md
@@ -315,7 +381,7 @@ def build(out: Path, with_zip: bool) -> None:
     # 6. Bundled weights
     models_dir = out / "models"
     models_dir.mkdir()
-    for name, src in WEIGHT_SOURCES.items():
+    for name, src in weight_sources.items():
         if not src.exists():
             print(f"  WARN: {src} missing — skipping {name}")
             continue
@@ -333,10 +399,9 @@ def build(out: Path, with_zip: bool) -> None:
     else:
         print(f"  WARN: {SAMPLE_IMAGE_DIR} missing — sample_images/ is empty")
 
-    # 8. Standalone notebook
-    patch_notebook(ROOT / "notebooks" / "ccdp_submission.ipynb",
-                   out / "ccdp_submission.ipynb")
-    print("patched + wrote ccdp_submission.ipynb")
+    # 8. Standalone notebook (variant-specific)
+    patch_notebook(notebook_src, out / "ccdp_submission.ipynb")
+    print(f"patched + wrote ccdp_submission.ipynb (from {notebook_src.name})")
 
     # 8b. Pre-rendered diagram PNGs (Mermaid → PNG via mermaid.ink). The
     # notebook's markdown references `assets/diagrams/*.png`; these need to
@@ -356,22 +421,27 @@ def build(out: Path, with_zip: bool) -> None:
     print(f"\nPackage: {out}  ({total/1e6:.1f} MB across {sum(1 for _ in out.rglob('*') if _.is_file())} files)")
 
     if with_zip:
-        zip_path = out.parent / f"{PKG_NAME}.zip"
+        zip_path = out.parent / f"{pkg_name}.zip"
         if zip_path.exists():
             zip_path.unlink()
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
             for f in out.rglob("*"):
                 if f.is_file():
-                    zf.write(f, arcname=Path(PKG_NAME) / f.relative_to(out))
+                    zf.write(f, arcname=Path(pkg_name) / f.relative_to(out))
         print(f"zipped -> {zip_path}  ({zip_path.stat().st_size/1e6:.1f} MB)")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--variant", choices=list(VARIANT_CONFIG), default="vmmrdb",
+                    help="Which submission flavour to build (default: vmmrdb mainline; "
+                         "stanford for the 196-class safety-net fallback).")
     ap.add_argument("--zip", action="store_true", help="Also produce the .zip alongside the folder.")
-    ap.add_argument("--out", type=Path, default=OUT, help=f"Output dir (default: {OUT}).")
+    ap.add_argument("--out", type=Path, default=None,
+                    help="Override output dir (defaults to the per-variant out_dir).")
     args = ap.parse_args()
-    build(args.out, with_zip=args.zip)
+    out = args.out or VARIANT_CONFIG[args.variant]["out_dir"]
+    build(out, with_zip=args.zip, variant=args.variant)
 
 
 if __name__ == "__main__":
