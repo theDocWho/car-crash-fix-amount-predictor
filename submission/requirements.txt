@@ -29,6 +29,12 @@ ipywidgets>=8.1
 matplotlib>=3.8
 certifi>=2024.2.2
 
+# interactive UI demo (§13 — Gradio app launched from the notebook)
+gradio>=5,<6
+python-multipart>=0.0.9
+# Gradio's pydub needs audioop, removed from the stdlib in Python 3.13+.
+audioop-lts>=0.2.1; python_version >= "3.13"
+
 # dataset fetch (optional — only needed for RUN_FETCH_DATA / RUN_TRAINING)
 kagglehub>=0.2
 torchinfo>=1.8
