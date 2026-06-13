@@ -31,3 +31,4 @@ certifi>=2024.2.2
 
 # dataset fetch (optional — only needed for RUN_FETCH_DATA / RUN_TRAINING)
 kagglehub>=0.2
+torchinfo>=1.8
