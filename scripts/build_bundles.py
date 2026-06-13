@@ -47,7 +47,7 @@ BUNDLES: dict[str, list[str]] = {
 
 # Globs to exclude from any bundle (caches, large/raw artifacts, weights).
 EXCLUDE = (
-    "__pycache__", ".pyc", ".DS_Store", ".ipynb_checkpoints",
+    "__pycache__", ".pyc", ".DS_Store", ".ipynb_checkpoints", ".egg-info",
     ".pt", ".ubj", ".onnx",            # never ship weights
 )
 
