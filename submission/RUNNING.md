@@ -12,51 +12,41 @@ can also just read it on GitHub with no setup at all.
 
 ## What you need (and what's bundled vs fetched)
 
-The submission ships as **two zips**, each under the 50 MB upload cap (produced
+The submission ships as **one zip**, well under the 50 MB upload cap (produced
 by `python scripts/build_bundles.py`):
 
 | Zip | Size | Contents |
 |---|---|---|
 | `ccdp_submission.zip` | ~10 MB | all code (`src/`, `scripts/`), the notebook, the report, diagrams, docs, sample/test images, eval CSV/JSON |
-| `ccdp_weights_essential.zip` | ~18 MB | the weights that fit the cap: `detector.pt`, `parts.pt`, `yoloseg.pt`, `xgb_a.ubj`, `xgb_b.ubj`, bundles + catalog → unzips into `submission/weights/` |
 
-**Why only some weights are bundled.** `.pt` checkpoints are raw float tensors
-and barely compress, so the two largest models cannot be made to fit a 50 MB
-zip:
-
-| Weight | Raw | Zipped (max compression) | Bundled? |
-|---|---|---|---|
-| `identifier.pt` | 103 MB | 91.5 MB | ❌ — from the release |
-| `classifier.pt` | 270 MB | 248 MB | ❌ — from the release |
-| `yoloseg / parts / detector / xgb / catalog` | ~18 MB | ~18 MB | ✅ `ccdp_weights_essential.zip` |
-
-The essential zip already covers the full **damage → parts → cost** pipeline
-(Variants B/C/D + multi-car). `identifier.pt` (make-aware price tiers) and
-`classifier.pt` (Variant A) are fetched on demand by the notebook's **§1.3**
-cell from the v1.0.0 GitHub release (no credentials needed). The notebook also
-runs read-only from its baked outputs if you fetch nothing.
+**Weights are not bundled — the notebook downloads them.** The **§1.3** cell
+pulls every weight from the v1.0.0 GitHub release into `submission/weights/`
+(no credentials needed). `.pt` checkpoints are raw float tensors that barely
+compress (`identifier.pt` 103 MB → 91.5 MB, `classifier.pt` 270 MB → 248 MB),
+so they could never fit a 50 MB zip anyway. The notebook also reads fine from
+its baked outputs if you download nothing.
 
 **Datasets** (Stanford ~2 GB, CarDD ~5.7 GB, carparts-seg ~133 MB) are never
-bundled; the **§1.5** cell fetches them on demand (opt-in) and they're only
-needed for the dataset previews and the optional `RUN_TRAINING` cells.
+bundled either; the **§1.5** cell fetches them on demand (opt-in) and they're
+only needed for the dataset previews and the optional `RUN_TRAINING` cells.
 
-Both zips unzip into the **same folder** and reconstruct this layout:
+The zip unzips into a single folder with this layout (`weights/` and `data/raw/`
+are filled in by the §1.3 / §1.5 cells when you run them):
 
 ```
 car-crash-fix-amount-predictor/
-├── pyproject.toml  requirements.txt          (ccdp_submission.zip)
-├── src/ccdp/  scripts/                        (ccdp_submission.zip)
+├── pyproject.toml  requirements.txt
+├── src/ccdp/  scripts/
 ├── submission/
-│   ├── ccdp_submission.ipynb                  (ccdp_submission.zip)
-│   ├── CCDP_Project_Report.docx               (ccdp_submission.zip)
-│   ├── assets/diagrams/                        (ccdp_submission.zip)
-│   ├── requirements.txt  README.md  RUNNING.md (ccdp_submission.zip)
-│   ├── test_images/                            (ccdp_submission.zip)
-│   └── weights/                                (ccdp_weights_essential.zip
-│                                                + identifier/classifier via §1.3)
+│   ├── ccdp_submission.ipynb
+│   ├── CCDP_Project_Report.docx
+│   ├── assets/diagrams/
+│   ├── requirements.txt  README.md  RUNNING.md
+│   ├── test_images/
+│   └── weights/                                (filled by §1.3 — release download)
 └── data/
-    ├── eval/                                   (ccdp_submission.zip — small CSV/JSON)
-    └── raw/                                    (populated by §1.5)
+    ├── eval/                                   (small CSV/JSON, bundled)
+    └── raw/                                    (filled by §1.5 — optional)
 ```
 
 ---
