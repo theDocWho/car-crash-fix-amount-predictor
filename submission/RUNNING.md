@@ -87,6 +87,11 @@ Inside the notebook, run top to bottom:
    have, set `DATA_ROOT` to the folder that contains them.
 4. Everything else runs on CPU. `RUN_TRAINING` cells are guarded `False` and
    skip by default — flip them on only on a GPU.
+5. **§13 Interactive UI (optional)** — the final cell launches the live Gradio
+   app inline so you can upload your own photos. It has no baked output (a live
+   server can't be captured statically); run it after §1.3. Needs `gradio`
+   (already in `submission/requirements.txt`); the cell also installs it on
+   demand if missing.
 
 ### Kaggle credentials (only if you fetch Stanford/CarDD)
 Create an API token at kaggle.com → Account → "Create New API Token", then
@@ -121,6 +126,9 @@ cell.
    sources).
 5. A **GPU runtime** is only useful for the `RUN_TRAINING` cells; inference and
    all five test cases run fine on CPU.
+6. **§13 Interactive UI (optional)** — launches the Gradio app. On Colab/Kaggle
+   it also prints a public `*.gradio.live` link (the inline frame is sometimes
+   blocked in hosted kernels); click that if nothing renders below the cell.
 
 ---
 
