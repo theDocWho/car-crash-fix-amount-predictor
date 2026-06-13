@@ -1,2 +1,11 @@
+# Fetched/unzipped model weights — never commit these (they live on the
+# v1.0.0 GitHub release and in ccdp_weights_essential.zip).
 *.pt
 *.ubj
+*.onnx
+*.json
+*.yaml
+*.yml
+# but keep this folder + its placeholder in git
+!.gitignore
+!.gitkeep
